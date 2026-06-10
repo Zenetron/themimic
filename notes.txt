@@ -1,0 +1,8 @@
+# Commandes utiles
+
+## Obtenir son adresse IP
+# Voir l'adresse IP locale (pour jouer en réseau local / Wi-Fi) :
+ipconfig getifaddr en0    # (ou en1 si branché par câble)
+
+# Voir l'adresse IP publique (sur Internet) :
+curl ifconfig.me
