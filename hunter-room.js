@@ -973,15 +973,20 @@ class HunterRoom {
         if (p.smokeUsed) return;
         p.smokeUsed = true;
 
+        const ang = Math.random() * Math.PI * 2;
+        const dist = 60 + Math.random() * 100;
+        const smokeX = p.x + Math.cos(ang) * dist;
+        const smokeY = p.y + Math.sin(ang) * dist;
+
         const smoke = {
             id: `smoke_${socketId}_${Date.now()}`,
-            x: p.x,
-            y: p.y,
+            x: smokeX,
+            y: smokeY,
             radius: 250,
             endsAt: Date.now() + 10000
         };
         this.smokes.push(smoke);
-        this.io.to(this.roomId).emit('ghostSmokeActive', { x: p.x, y: p.y, radius: 250, duration: 10000 });
+        this.io.to(this.roomId).emit('ghostSmokeActive', { x: smokeX, y: smokeY, radius: 250, duration: 10000 });
     }
 
     _handleSprint(socketId) {
@@ -1442,21 +1447,51 @@ class HunterRoom {
                         p.input = { up: false, down: false, left: false, right: false };
                     }
                 } else {
-                    p.input = { up: false, down: false, left: false, right: false };
-
-                    const hunter = Object.values(this.players).find(hp => hp.role === 'hunter');
-                    if (hunter) {
-                        const hdx = p.x - hunter.x;
-                        const hdy = p.y - hunter.y;
-                        const hdistSq = hdx*hdx + hdy*hdy;
-                        if (hdistSq < 150 * 150) {
-                            if (!p.smokeUsed && Math.random() < 0.05) {
-                                this._handleSmokeScreen(botKey);
+                    if (p.aiPanicTimer === undefined) p.aiPanicTimer = 0;
+                    if (p.aiPanicTimer > 0) {
+                        p.aiPanicTimer -= 1 / 60;
+                        const hunter = Object.values(this.players).find(hp => hp.role === 'hunter');
+                        if (hunter) {
+                            const hdx = p.x - hunter.x;
+                            const hdy = p.y - hunter.y;
+                            const hdist = Math.sqrt(hdx * hdx + hdy * hdy);
+                            if (hdist > 10) {
+                                p.input.up = hdy > 0;
+                                p.input.down = hdy < 0;
+                                p.input.left = hdx > 0;
+                                p.input.right = hdx < 0;
+                            } else {
+                                p.input = { up: false, down: false, left: false, right: false };
                             }
-                            if (!p.sprintUsed && Math.random() < 0.1) {
-                                this._handleSprint(botKey);
+                            if (hdist < 180) {
+                                if (!p.smokeUsed && Math.random() < 0.02) {
+                                    this._handleSmokeScreen(botKey);
+                                }
+                                if (!p.sprintUsed && Math.random() < 0.05) {
+                                    this._handleSprint(botKey);
+                                }
+                            }
+                        } else {
+                            p.input = { up: false, down: false, left: false, right: false };
+                        }
+                    } else {
+                        p.input = { up: false, down: false, left: false, right: false };
+                        const hunter = Object.values(this.players).find(hp => hp.role === 'hunter');
+                        if (hunter) {
+                            const hdx = p.x - hunter.x;
+                            const hdy = p.y - hunter.y;
+                            const hdistSq = hdx * hdx + hdy * hdy;
+                            if (hdistSq < 180 * 180 && Math.random() < 0.01) {
+                                if (Math.random() < 0.6) {
+                                    p.aiPanicTimer = 3.0 + Math.random() * 2.0;
+                                } else {
+                                    p.aiPanicTimer = -2.0;
+                                }
                             }
                         }
+                    }
+                    if (p.aiPanicTimer < 0) {
+                        p.aiPanicTimer = Math.min(0, p.aiPanicTimer + 1/60);
                     }
                 }
             }
