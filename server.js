@@ -1564,17 +1564,32 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('joinRandomRoom', () => {
-        const availableRooms = Object.values(rooms).filter(
-            r => r.isPublic && Object.keys(r.players).length < 4 && r.state === 'LOBBY'
-        );
-        if (availableRooms.length > 0) {
-            const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
-            currentRoom = randomRoom;
-            randomRoom.addPlayer(socket, Object.keys(randomRoom.players).length + 1);
-            socket.emit('roomJoined', randomRoom.roomId);
+    socket.on('joinRandomRoom', (data) => {
+        const mode = (data && data.mode) ? data.mode : 'mimic';
+        if (mode === 'hunter') {
+            const availableRooms = Object.values(hunterRooms).filter(
+                r => r.isPublic && Object.keys(r.players).length < 4 && r.state === 'LOBBY'
+            );
+            if (availableRooms.length > 0) {
+                const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
+                currentHunterRoom = randomRoom;
+                randomRoom.addPlayer(socket, Object.keys(randomRoom.players).length + 1);
+                socket.emit('hunterRoomJoined', { code: randomRoom.roomId, maps: Object.keys(HUNTER_MAPS) });
+            } else {
+                socket.emit('errorMsg', 'No public hunter rooms available right now. Host one!');
+            }
         } else {
-            socket.emit('errorMsg', 'No public rooms available right now. Host one!');
+            const availableRooms = Object.values(rooms).filter(
+                r => r.isPublic && Object.keys(r.players).length < 4 && r.state === 'LOBBY'
+            );
+            if (availableRooms.length > 0) {
+                const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
+                currentRoom = randomRoom;
+                randomRoom.addPlayer(socket, Object.keys(randomRoom.players).length + 1);
+                socket.emit('roomJoined', randomRoom.roomId);
+            } else {
+                socket.emit('errorMsg', 'No public rooms available right now. Host one!');
+            }
         }
     });
 
@@ -1582,11 +1597,15 @@ io.on('connection', (socket) => {
         if (currentRoom && currentRoom.players[socket.id]?.playerNum === 1) {
             currentRoom.isPublic = !currentRoom.isPublic;
             io.to(currentRoom.roomId).emit('roomStatus', currentRoom.getLobbyStatus());
+        } else if (currentHunterRoom && currentHunterRoom.players[socket.id]?.playerNum === 1) {
+            currentHunterRoom.isPublic = !currentHunterRoom.isPublic;
+            io.to(currentHunterRoom.roomId).emit('roomStatus', currentHunterRoom.getLobbyStatus());
         }
     });
 
     socket.on('backToLobby', () => {
         if (currentRoom) currentRoom.resetToLobby();
+        if (currentHunterRoom) currentHunterRoom.resetToLobby();
     });
 
     // ── HUNTER MODE ─────────────────────────────────────────

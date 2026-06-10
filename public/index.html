@@ -144,12 +144,12 @@
         }
         .panel::before {
             top: -1px; left: -1px;
-            border-width: 3px 0 0 3px;
+            border-width: 1.5px 0 0 1.5px;
             box-shadow: -4px -4px 12px rgba(0,255,255,0.4);
         }
         .panel::after {
             bottom: -1px; right: -1px;
-            border-width: 0 3px 3px 0;
+            border-width: 0 1.5px 1.5px 0;
             box-shadow: 4px 4px 12px rgba(0,255,255,0.3);
         }
 
@@ -1825,8 +1825,7 @@
         });
 
         btnJoinRandom.addEventListener('click', () => {
-            if (selectedMode === 'hunter') return;
-            socket.emit('joinRandomRoom');
+            socket.emit('joinRandomRoom', { mode: selectedMode });
             isHost = false;
         });
 
