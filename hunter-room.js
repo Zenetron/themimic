@@ -29,7 +29,8 @@ const BIOME_POOLS = {
         { type: 'AMMO_BOX',     radius: 22, weight: 3 },
         { type: 'TOOL_CHEST',   radius: 24, weight: 2 },
         { type: 'CONE',         radius: 13, weight: 2 },
-        { type: 'GENERATOR',    radius: 28, weight: 1 }
+        { type: 'GENERATOR',    radius: 28, weight: 1 },
+        { type: 'TOXIC_DRUM',    radius: 19, weight: 2 }
     ],
     'Zone Charlie': [
         { type: 'BARREL',       radius: 18, weight: 4 },
@@ -41,7 +42,8 @@ const BIOME_POOLS = {
         { type: 'CRATE_M',      radius: 28, weight: 2 },
         { type: 'TURRET_OFF',   radius: 26, weight: 2 },
         { type: 'CAMO_NET',     radius: 32, weight: 2 },
-        { type: 'GENERATOR',    radius: 28, weight: 1 }
+        { type: 'GENERATOR',    radius: 28, weight: 1 },
+        { type: 'RADAR_DISH',    radius: 25, weight: 2 }
     ],
     'Bloc Tactique': [
         { type: 'LOCKER',       radius: 22, weight: 4 },
@@ -53,7 +55,8 @@ const BIOME_POOLS = {
         { type: 'FIRE_EXT',     radius: 12, weight: 3 },
         { type: 'CONE',         radius: 13, weight: 2 },
         { type: 'BARREL',       radius: 18, weight: 2 },
-        { type: 'GENERATOR',    radius: 28, weight: 1 }
+        { type: 'GENERATOR',    radius: 28, weight: 1 },
+        { type: 'OFFICE_CHAIR',  radius: 16, weight: 2 }
     ]
 };
 

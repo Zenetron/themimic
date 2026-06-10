@@ -2130,7 +2130,6 @@
             if (myRole !== 'prop') { hint.style.display = 'none'; nearbyPropId = null; return; }
             const me = G.players[localPlayerId];
             if (!me || me.eliminated) { hint.style.display = 'none'; nearbyPropId = null; return; }
-            if (G.phase === 'HUNT' && me.disguised) { hint.style.display = 'none'; nearbyPropId = null; return; }
 
             const mouseW = screenToWorldCoords(mouseScreenX, mouseScreenY);
             let bestProp = null;
@@ -2154,16 +2153,26 @@
 
             if (bestProp) {
                 nearbyPropId = bestProp.id;
-                const propNames = {
+                const propNames = (currentLang === 'en') ? {
+                    'CRATE_S': 'Small Crate', 'CRATE_M': 'Medium Crate', 'CRATE_L': 'Large Crate',
+                    'BARREL': 'Metal Barrel', 'FUEL_DRUM': 'Fuel Drum', 'CONE': 'Traffic Cone',
+                    'PALLET': 'Wooden Pallet', 'AMMO_BOX': 'Ammo Box', 'TOOL_CHEST': 'Tool Chest',
+                    'GENERATOR': 'Power Generator', 'FIRE_EXT': 'Fire Extinguisher', 'SANDBAG': 'Sandbag',
+                    'LOCKER': 'Metal Locker', 'SERVER_RACK': 'Server Rack', 'DESK': 'Tactical Desk',
+                    'TURRET_OFF': 'Inactive Turret', 'CAMO_NET': 'Camouflage Net',
+                    'TOXIC_DRUM': 'Toxic Drum', 'RADAR_DISH': 'Radar Dish', 'OFFICE_CHAIR': 'Office Chair'
+                } : {
                     'CRATE_S': 'Petite Caisse', 'CRATE_M': 'Caisse Moyenne', 'CRATE_L': 'Grande Caisse',
                     'BARREL': 'Baril métallique', 'FUEL_DRUM': 'Baril de carburant', 'CONE': 'Cône de chantier',
                     'PALLET': 'Palette bois', 'AMMO_BOX': 'Caisse de munitions', 'TOOL_CHEST': 'Coffre à outils',
                     'GENERATOR': 'Générateur électrique', 'FIRE_EXT': 'Extincteur', 'SANDBAG': 'Sac de sable',
                     'LOCKER': 'Armoire métallique', 'SERVER_RACK': 'Rack serveur', 'DESK': 'Bureau tactique',
-                    'TURRET_OFF': 'Tourelle inactive', 'CAMO_NET': 'Filet de camouflage'
+                    'TURRET_OFF': 'Tourelle inactive', 'CAMO_NET': 'Filet de camouflage',
+                    'TOXIC_DRUM': 'Bidon Toxique', 'RADAR_DISH': 'Antenne Radar', 'OFFICE_CHAIR': 'Chaise de bureau'
                 };
                 const friendlyName = propNames[bestProp.type] || bestProp.type;
-                hint.innerHTML = `<span style="color: #ffcc00; font-weight: bold;">[E]</span> copier <span style="color: #00ffaa; font-weight: bold;">${friendlyName}</span>`;
+                const keyPrompt = (currentLang === 'en') ? 'copy' : 'copier';
+                hint.innerHTML = `<span style="color: #ffcc00; font-weight: bold;">[E]</span> ${keyPrompt} <span style="color: #00ffaa; font-weight: bold;">${friendlyName}</span>`;
                 hint.style.display = 'block';
             } else {
                 nearbyPropId = null;
@@ -4558,6 +4567,93 @@
             ctx.restore();
         }
 
+        function drawHunterToxicDrum(ctx, r) {
+            drawGroundShadow(ctx, 0, 0, r * 1.2);
+            ctx.save();
+            const bodyG = ctx.createLinearGradient(-r, 0, r, 0);
+            bodyG.addColorStop(0, '#1a331a');
+            bodyG.addColorStop(0.3, '#336633');
+            bodyG.addColorStop(0.7, '#1a331a');
+            bodyG.addColorStop(1, '#0c1a0c');
+            ctx.fillStyle = bodyG;
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#39ff14';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.7, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#39ff14';
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.25, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawHunterRadarDish(ctx, r) {
+            drawGroundShadow(ctx, 0, 0, r * 1.2);
+            ctx.save();
+            ctx.fillStyle = '#444';
+            ctx.fillRect(-r * 0.4, -r * 0.4, r * 0.8, r * 0.8);
+            ctx.strokeStyle = '#222';
+            ctx.strokeRect(-r * 0.4, -r * 0.4, r * 0.8, r * 0.8);
+            const dishG = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+            dishG.addColorStop(0, '#aaa');
+            dishG.addColorStop(0.6, '#888');
+            dishG.addColorStop(1, '#555');
+            ctx.fillStyle = dishG;
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+            ctx.moveTo(0, -r); ctx.lineTo(0, r);
+            ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#d00';
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.15, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawHunterOfficeChair(ctx, r) {
+            drawGroundShadow(ctx, 0, 0, r * 1.1);
+            ctx.save();
+            ctx.strokeStyle = '#111';
+            ctx.lineWidth = 3;
+            for (let i = 0; i < 5; i++) {
+                const ang = (i * Math.PI * 2) / 5;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.cos(ang) * r * 0.9, Math.sin(ang) * r * 0.9);
+                ctx.stroke();
+            }
+            const seatG = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 0.8);
+            seatG.addColorStop(0, '#445');
+            seatG.addColorStop(1, '#222d3a');
+            ctx.fillStyle = seatG;
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#111822';
+            ctx.fillRect(-r * 0.6, -r * 0.9, r * 1.2, r * 0.35);
+            ctx.strokeStyle = '#333';
+            ctx.strokeRect(-r * 0.6, -r * 0.9, r * 1.2, r * 0.35);
+            ctx.fillStyle = '#222';
+            ctx.fillRect(-r * 0.9, -r * 0.4, r * 0.18, r * 0.7);
+            ctx.fillRect(r * 0.72, -r * 0.4, r * 0.18, r * 0.7);
+            ctx.restore();
+        }
+
         function drawPropShape(ctx, type, r, alpha = 1) {
             ctx.save();
             ctx.globalAlpha = alpha;
@@ -4595,6 +4691,12 @@
                 drawHunterTurret(ctx, r);
             } else if (type === 'CAMO_NET') {
                 drawHunterCamoNet(ctx, r);
+            } else if (type === 'TOXIC_DRUM') {
+                drawHunterToxicDrum(ctx, r);
+            } else if (type === 'RADAR_DISH') {
+                drawHunterRadarDish(ctx, r);
+            } else if (type === 'OFFICE_CHAIR') {
+                drawHunterOfficeChair(ctx, r);
             } else {
                 ctx.fillStyle = '#555';
                 ctx.fillRect(-r, -r, r * 2, r * 2);
