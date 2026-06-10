@@ -772,7 +772,13 @@ class HunterRoom {
         if (!this._canMove(p)) { p.vx = 0; p.vy = 0; return; }
 
         let speed = PLAYER_SPEED;
-        if (p.role === 'prop' && p.disguised) speed = DISGUISED_SPEED;
+        if (p.role === 'prop' && p.disguised) {
+            const refRadius = 22;
+            const radius = p.disguiseRadius || refRadius;
+            const factor = refRadius / radius;
+            const clampedFactor = Math.max(0.5, Math.min(2.0, factor));
+            speed = DISGUISED_SPEED * clampedFactor;
+        }
         if (p.isBot && p.role === 'hunter') {
             speed = PLAYER_SPEED * (0.8 + 0.3 * (p.aiDifficulty || 0.7));
         }
@@ -852,9 +858,7 @@ class HunterRoom {
         const p = this.players[socketId];
         if (!p || p.role !== 'prop' || p.eliminated) return;
         
-        // Allow switching disguise in CACHE, but restrict in HUNT phase
-        if (p.disguised && this.phase === 'HUNT') return;
-        if (this.phase === 'HUNT' && p.hasDisguised) return; // Only 1 disguise switch in HUNT
+        // Allow switching disguise dynamically in CACHE and HUNT phases without restrictions
 
         const prop = this.props.find(pr => pr.id === propId);
         if (!prop) return;

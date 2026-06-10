@@ -2769,7 +2769,17 @@
                 if (e.code === 'KeyF' || e.key === 'f' || e.key === 'F') {
                     socket.emit('hunterRotateDisguise');
                 }
-                if (e.code === 'KeyQ' && G.state === 'PLAYING') {
+                let isPowerupKey = false;
+                if (currentLang === 'fr') {
+                    if ((e.key === 'a' || e.key === 'A' || e.code === 'KeyQ') && e.code !== 'KeyA') {
+                        isPowerupKey = true;
+                    }
+                } else {
+                    if ((e.key === 'q' || e.key === 'Q' || e.code === 'KeyQ') && e.code !== 'KeyA') {
+                        isPowerupKey = true;
+                    }
+                }
+                if (isPowerupKey && G.state === 'PLAYING') {
                     document.getElementById(myRole === 'hunter' ? 'btnDrone' : 'btnSmoke')?.click();
                 }
                 if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.key === 'Shift') && G.state === 'PLAYING') {
