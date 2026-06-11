@@ -153,7 +153,7 @@ async function main() {
         test('hunterState hunterHealth === 100', hunterState.hunterHealth === 100);
         
         const playerIds = Object.keys(hunterState.players);
-        test('hunterState contains our players', playerIds.length === 4);
+        test('hunterState contains our players', playerIds.length === CLIENT_COUNT);
         if (playerIds.length > 0) {
             const p = hunterState.players[playerIds[0]];
             test('Player has x, y', p.x !== undefined && p.y !== undefined);

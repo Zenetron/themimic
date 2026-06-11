@@ -5,6 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>THE MIMIC - Online</title>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
@@ -1137,7 +1141,7 @@
 
             <!-- Countdown section (hidden until READY is clicked) -->
             <div class="countdown-wrap" id="countdownWrap">
-                <div class="countdown-ring-container">
+                <div class="countdown-ring-container" id="countdownRingContainer">
                     <svg width="90" height="90" viewBox="0 0 90 90">
                         <circle class="countdown-ring-bg" cx="45" cy="45" r="40"/>
                         <circle class="countdown-ring-fill" id="countdownRingFill"
@@ -1787,8 +1791,8 @@
             mainMenuSub.textContent = s.mainMenuSubHunter;
             const controlsEl = document.getElementById('controlsInfo');
             if (controlsEl) controlsEl.innerHTML = s.controlsInfoHunter;
-            btnJoinRandom.classList.add('hidden');
-            if (quickMatchOr) quickMatchOr.classList.add('hidden');
+            btnJoinRandom.classList.remove('hidden');
+            if (quickMatchOr) quickMatchOr.classList.remove('hidden');
         });
 
         btnCreateRoom.addEventListener('click', () => {
@@ -2478,26 +2482,36 @@
         socket.on('lobbyCountdown', (data) => {
             const { seconds, total, slots, readyCount, playerCount } = data;
             const isHost = (localPlayerId === data.hostId);
-            const isUrgent = seconds <= 10;
+            const isUrgent = seconds !== null && seconds <= 10;
+            const countdownRingContainer = document.getElementById('countdownRingContainer');
 
-            // Ring
-            const progress = seconds / total;
-            countdownRing.style.strokeDashoffset = RING_CIRC * (1 - progress);
-            countdownRing.classList.toggle('urgent', isUrgent);
-
-            // Number
-            countdownNumber.firstChild.textContent = String(seconds).padStart(2, '0');
-            countdownNumber.classList.toggle('urgent', isUrgent);
-
-            // Message
-            if (isUrgent) {
-                countdownMsg.textContent = (currentLang === 'en') ? 'FILLING WITH AI IN ' + seconds : 'DÉMARRAGE DE L\'IA DANS ' + seconds;
-                countdownMsg.classList.add('urgent');
-            } else {
+            if (seconds === null || !data.isQuickMatch) {
+                if (countdownRingContainer) countdownRingContainer.style.display = 'none';
                 countdownMsg.textContent = (currentLang === 'en')
-                    ? `${readyCount}/${playerCount} READY — FILLING AI IN ${seconds}`
-                    : `${readyCount}/${playerCount} PRÊT(S) — DÉMARRAGE DE L\'IA DANS ${seconds}`;
+                    ? `${readyCount}/${playerCount} READY — Waiting for host to start...`
+                    : `${readyCount}/${playerCount} PRÊT(S) — En attente du lancement par l'hôte...`;
                 countdownMsg.classList.remove('urgent');
+            } else {
+                if (countdownRingContainer) countdownRingContainer.style.display = 'flex';
+                // Ring
+                const progress = seconds / total;
+                countdownRing.style.strokeDashoffset = RING_CIRC * (1 - progress);
+                countdownRing.classList.toggle('urgent', isUrgent);
+
+                // Number
+                countdownNumber.firstChild.textContent = String(seconds).padStart(2, '0');
+                countdownNumber.classList.toggle('urgent', isUrgent);
+
+                // Message
+                if (isUrgent) {
+                    countdownMsg.textContent = (currentLang === 'en') ? 'FILLING WITH AI IN ' + seconds : 'DÉMARRAGE DE L\'IA DANS ' + seconds;
+                    countdownMsg.classList.add('urgent');
+                } else {
+                    countdownMsg.textContent = (currentLang === 'en')
+                        ? `${readyCount}/${playerCount} READY — FILLING AI IN ${seconds}`
+                        : `${readyCount}/${playerCount} PRÊT(S) — DÉMARRAGE DE L\'IA DANS ${seconds}`;
+                    countdownMsg.classList.remove('urgent');
+                }
             }
 
             // Slots

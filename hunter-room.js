@@ -374,16 +374,17 @@ function generateProps(mapSize, count, biome, seed) {
 // CLASS HunterRoom
 // ──────────────────────────────────────────────
 class HunterRoom {
-    constructor(roomId, hostSocket, io, roomsRef) {
+    constructor(roomId, hostSocket, io, roomsRef, isQuickMatch = false) {
         this.roomId   = roomId;
         this.io       = io;
         this.roomsRef = roomsRef;
         this.gameMode = 'hunter';
+        this.isQuickMatch = isQuickMatch;
+        this.isPublic = isQuickMatch;
 
         this.players  = {};   // socketId → playerData
         this.state    = 'LOBBY';
         this.theme    = 'Depot Alpha';
-        this.isPublic = false;
         this.hostId   = hostSocket.id;
         this.MAX_PLAYERS   = 4;
         this.MAX_COUNTDOWN = 45;
@@ -445,6 +446,8 @@ class HunterRoom {
         if (this.state === 'COUNTDOWN') {
             this.countdownSeconds = Math.min(this.MAX_COUNTDOWN, this.countdownSeconds + 15);
             this.broadcastCountdown();
+        } else {
+            this.broadcastCountdown();
         }
 
         this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
@@ -470,8 +473,12 @@ class HunterRoom {
                 this.startGame();
                 return;
             }
-            if (this.state === 'LOBBY') this.startCountdown();
-            else this.broadcastCountdown();
+            if (this.isQuickMatch) {
+                if (this.state === 'LOBBY') this.startCountdown();
+                else this.broadcastCountdown();
+            } else {
+                this.broadcastCountdown();
+            }
         });
 
         socket.on('startNow', () => {
@@ -595,12 +602,13 @@ class HunterRoom {
             return p ? { type: 'player', ready: p.isReady, num: p.playerNum, avatar: p.avatar } : { type: 'empty' };
         });
         this.io.to(this.roomId).emit('lobbyCountdown', {
-            seconds:     this.countdownSeconds,
+            seconds:     this.isQuickMatch ? this.countdownSeconds : null,
             total:       this.MAX_COUNTDOWN,
             slots,
             readyCount:  humans.filter(p => p.isReady).length,
             playerCount: humans.length,
-            hostId:      this.hostId
+            hostId:      this.hostId,
+            isQuickMatch: this.isQuickMatch
         });
     }
 
@@ -631,9 +639,10 @@ class HunterRoom {
             ];
         }
 
-        // Fill with bots up to MAX_PLAYERS (4) if needed
+        // Fill with bots up to MAX_PLAYERS (4) if needed (Quick Match or Solo Test only)
         const currentHumanIds = Object.keys(this.players);
-        if (currentHumanIds.length < this.MAX_PLAYERS) {
+        const shouldFillBots = this.isQuickMatch || (currentHumanIds.length === 1);
+        if (shouldFillBots && currentHumanIds.length < this.MAX_PLAYERS) {
             const botNames = ['🤖 OPÉRATEUR-ALPHA', '🤖 SPECTRE-BRAVO', '🤖 AGENT-DELTA', '🤖 PHANTOM-SIGMA'];
             const hostAvatar = this.players[this.hostId]?.avatar || 'Combat-Operative';
             let botIndex = 0;
@@ -1632,6 +1641,7 @@ class HunterRoom {
             p.teleportReadyAt = 0;
         }
         this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
+        this.broadcastCountdown();
     }
 
     handleDisconnect(socketId) {

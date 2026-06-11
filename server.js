@@ -567,13 +567,14 @@ class Entity {
 }
 
 class GameRoom {
-    constructor(roomId, hostSocket) {
+    constructor(roomId, hostSocket, isQuickMatch = false) {
         this.roomId = roomId;
         this.players = {}; // socket.id -> { playerNum, socket, lives, isReady, avatar }
         this.entities = [];
         this.state = 'LOBBY'; // LOBBY, COUNTDOWN, PLAYING, GAME_OVER
         this.theme = 'Arcade Grid';
-        this.isPublic = false;
+        this.isQuickMatch = isQuickMatch;
+        this.isPublic = isQuickMatch;
         this.mapSize = { w: 2000, h: 2000 };
         this.totalEntities = 50;
         this.gameMode = 'classic'; // 'classic' or 'hunter'
@@ -623,6 +624,8 @@ class GameRoom {
             const extended = Math.min(this.MAX_COUNTDOWN, this.countdownSeconds + 15);
             this.countdownSeconds = extended;
             this.broadcastCountdown();
+        } else {
+            this.broadcastCountdown();
         }
 
         // Listeners for this room
@@ -646,11 +649,15 @@ class GameRoom {
                     return;
                 }
 
-                // Start countdown on first ready player
-                if (this.state === 'LOBBY') {
-                    this.startCountdown();
+                // Start countdown on first ready player (Quick Match only)
+                if (this.isQuickMatch) {
+                    if (this.state === 'LOBBY') {
+                        this.startCountdown();
+                    } else {
+                        this.broadcastCountdown(); // update ready count in UI
+                    }
                 } else {
-                    this.broadcastCountdown(); // update ready count in UI
+                    this.broadcastCountdown();
                 }
             }
         });
@@ -751,12 +758,13 @@ class GameRoom {
             return { type: 'player', ready: p.isReady, num: p.playerNum };
         });
         io.to(this.roomId).emit('lobbyCountdown', {
-            seconds: this.countdownSeconds,
+            seconds: this.isQuickMatch ? this.countdownSeconds : null,
             total: this.MAX_COUNTDOWN,
             slots,
             readyCount: humans.filter(p => p.isReady).length,
             playerCount: humans.length,
-            hostId: this.hostId
+            hostId: this.hostId,
+            isQuickMatch: this.isQuickMatch
         });
     }
 
@@ -810,12 +818,11 @@ class GameRoom {
         }
         this.entities = [];
 
-        // Fill empty player slots with Bot Players up to 4
         const maxRealPlayers = 4;
         const currentRealPlayerIds = Object.keys(this.players);
         const currentRealPlayerCount = currentRealPlayerIds.length;
-
-        if (currentRealPlayerCount < maxRealPlayers) {
+        const shouldFillBots = this.isQuickMatch || (currentRealPlayerCount === 1);
+        if (shouldFillBots && currentRealPlayerCount < maxRealPlayers) {
             const botNames = ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA'];
             const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
             
@@ -930,12 +937,11 @@ class GameRoom {
     startHunterGame() {
         this.entities = [];
 
-        // Fill bots as needed up to MAX_PLAYERS
         const maxRealPlayers = 4;
         const currentRealPlayerIds = Object.keys(this.players);
         const currentRealPlayerCount = currentRealPlayerIds.length;
-
-        if (currentRealPlayerCount < maxRealPlayers) {
+        const shouldFillBots = this.isQuickMatch || (currentRealPlayerCount === 1);
+        if (shouldFillBots && currentRealPlayerCount < maxRealPlayers) {
             const botNames = ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA'];
             const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
             let botIdx = 0;
@@ -1242,6 +1248,7 @@ class GameRoom {
                 p.isReady = false;
             }
             io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
+            this.broadcastCountdown();
         }
     }
 
@@ -1576,7 +1583,12 @@ io.on('connection', (socket) => {
                 randomRoom.addPlayer(socket, Object.keys(randomRoom.players).length + 1);
                 socket.emit('hunterRoomJoined', { code: randomRoom.roomId, maps: Object.keys(HUNTER_MAPS) });
             } else {
-                socket.emit('errorMsg', 'No public hunter rooms available right now. Host one!');
+                const code = generateRoomCode();
+                const newRoom = new HunterRoom(code, socket, io, hunterRooms, true);
+                hunterRooms[code] = newRoom;
+                currentHunterRoom = newRoom;
+                socket.emit('hunterRoomCreated', { code, maps: Object.keys(HUNTER_MAPS) });
+                newRoom.startCountdown();
             }
         } else {
             const availableRooms = Object.values(rooms).filter(
@@ -1588,7 +1600,12 @@ io.on('connection', (socket) => {
                 randomRoom.addPlayer(socket, Object.keys(randomRoom.players).length + 1);
                 socket.emit('roomJoined', randomRoom.roomId);
             } else {
-                socket.emit('errorMsg', 'No public rooms available right now. Host one!');
+                const code = generateRoomCode();
+                const newRoom = new GameRoom(code, socket, true);
+                rooms[code] = newRoom;
+                currentRoom = newRoom;
+                socket.emit('roomCreated', code);
+                newRoom.startCountdown();
             }
         }
     });
