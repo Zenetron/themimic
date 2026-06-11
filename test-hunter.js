@@ -77,7 +77,7 @@ async function main() {
 
     // Both clients playerReady
     log('Clients marking ready...');
-    clients[0].emit('playerReady', { avatar: 'Combat-Operative', theme: 'Zone Charlie' });
+    clients[0].emit('playerReady', { avatar: 'Combat-Operative', theme: 'Depot Alpha' });
     clients[1].emit('playerReady', { avatar: 'Combat-Operative' });
 
     await sleep(200);
@@ -108,7 +108,7 @@ async function main() {
     // Validate payload
     if (hunterGameStartData) {
         test('hunterGameStart has gameMode === "hunter"', hunterGameStartData.gameMode === 'hunter');
-        test('hunterGameStart has theme', hunterGameStartData.theme === 'Zone Charlie');
+        test('hunterGameStart has theme', hunterGameStartData.theme === 'Depot Alpha');
         test('hunterGameStart has seed', hunterGameStartData.seed !== undefined);
         test('hunterGameStart has props array', Array.isArray(hunterGameStartData.props));
         test('hunterGameStart has hunterId', hunterGameStartData.hunterId !== undefined);
@@ -151,6 +151,12 @@ async function main() {
         test('hunterState has players object', typeof hunterState.players === 'object');
         test('hunterState phase is RECON', hunterState.phase === 'RECON');
         test('hunterState hunterHealth === 100', hunterState.hunterHealth === 100);
+        
+        test('hunterState has doors array', Array.isArray(hunterState.doors));
+        test('hunterState has 1 vault door', hunterState.doors && hunterState.doors.length === 1);
+        if (hunterState.doors && hunterState.doors.length === 1) {
+            test('vault door id is door_vault', hunterState.doors[0].id === 'door_vault');
+        }
         
         const playerIds = Object.keys(hunterState.players);
         test('hunterState contains our players', playerIds.length === CLIENT_COUNT);

@@ -116,6 +116,136 @@ function generateProps(mapSize, count, biome, seed) {
     const cx = mapSize.w / 2;
     const cy = mapSize.h / 2;
 
+    const doors = [];
+    let rx = 0, ry = 0;
+    let halfW = 180;
+    let halfH = 140;
+    let hasVault = false;
+
+    if (biome === 'Depot Alpha') {
+        hasVault = true;
+        let valid = false;
+        let limitAttempts = 0;
+        while (!valid && limitAttempts < 100) {
+            limitAttempts++;
+            rx = Math.floor(400 + rng() * (mapSize.w - 800));
+            ry = Math.floor(400 + rng() * (mapSize.h - 800));
+            const distToHub = Math.sqrt((rx - cx) ** 2 + (ry - cy) ** 2);
+            if (distToHub > 600) {
+                valid = true;
+            }
+        }
+        if (!valid) {
+            rx = 600;
+            ry = 600;
+        }
+
+        const step = wallRadius * 1.6;
+
+        for (let y = ry - halfH; y <= ry + halfH; y += step) {
+            props.push({
+                id: `vault_wall_L_${Math.round(y)}`,
+                type: wallType,
+                x: rx - halfW,
+                y: Math.round(y),
+                radius: wallRadius,
+                angle: Math.PI / 2,
+                animated: false
+            });
+        }
+
+        for (let y = ry - halfH; y <= ry + halfH; y += step) {
+            props.push({
+                id: `vault_wall_R_${Math.round(y)}`,
+                type: wallType,
+                x: rx + halfW,
+                y: Math.round(y),
+                radius: wallRadius,
+                angle: Math.PI / 2,
+                animated: false
+            });
+        }
+
+        for (let x = rx - halfW + step; x < rx + halfW; x += step) {
+            props.push({
+                id: `vault_wall_B_${Math.round(x)}`,
+                type: wallType,
+                x: Math.round(x),
+                y: ry + halfH,
+                radius: wallRadius,
+                angle: 0,
+                animated: false
+            });
+        }
+
+        for (let x = rx - halfW + step; x <= rx - 60; x += step) {
+            props.push({
+                id: `vault_wall_T_left_${Math.round(x)}`,
+                type: wallType,
+                x: Math.round(x),
+                y: ry - halfH,
+                radius: wallRadius,
+                angle: 0,
+                animated: false
+            });
+        }
+        for (let x = rx + 60; x < rx + halfW; x += step) {
+            props.push({
+                id: `vault_wall_T_right_${Math.round(x)}`,
+                type: wallType,
+                x: Math.round(x),
+                y: ry - halfH,
+                radius: wallRadius,
+                angle: 0,
+                animated: false
+            });
+        }
+
+        doors.push({
+            id: 'door_vault',
+            x: rx,
+            y: ry - halfH,
+            w: 130,
+            h: 32,
+            consoleX: rx - 85,
+            consoleY: ry - halfH,
+            open: false
+        });
+
+        const insidePropCount = Math.floor(3 + rng() * 3);
+        let insideAttempts = 0;
+        let insidePropsSpawned = 0;
+        while (insidePropsSpawned < insidePropCount && insideAttempts < 50) {
+            insideAttempts++;
+            const def = weightedPick(rng, pool);
+            const px = Math.round(rx - halfW + 55 + rng() * (halfW * 2 - 110));
+            const py = Math.round(ry - halfH + 55 + rng() * (halfH * 2 - 110));
+
+            let overlap = false;
+            for (let i = props.length - insidePropsSpawned; i < props.length; i++) {
+                const p = props[i];
+                const dx = px - p.x;
+                const dy = py - p.y;
+                if (dx*dx + dy*dy < (p.radius + def.radius + 15) ** 2) {
+                    overlap = true;
+                    break;
+                }
+            }
+            if (overlap) continue;
+
+            props.push({
+                id: `vault_prop_${insidePropsSpawned}`,
+                type: def.type,
+                x: px,
+                y: py,
+                radius: def.radius,
+                angle: Math.floor(rng() * 4) * (Math.PI / 2),
+                animated: false
+            });
+            insidePropsSpawned++;
+        }
+    }
+
     // 1. Spawn Central Hub Core (pulsing generator)
     props.push({
         id: 'hub_core',
@@ -222,6 +352,9 @@ function generateProps(mapSize, count, biome, seed) {
         // Central Hub exclusion zone
         if (Math.abs(x - cx) < 200 && Math.abs(y - cy) < 200) return false;
 
+        // Vault exclusion zone
+        if (hasVault && Math.abs(x - rx) < halfW + 70 && Math.abs(y - ry) < halfH + 70) return false;
+
         // Existing props overlap
         for (const p of propsList) {
             const dx = x - p.x;
@@ -253,6 +386,7 @@ function generateProps(mapSize, count, biome, seed) {
             for (let x = xStart + startMargin; x < xEnd - endMargin; x += step) {
                 if (x > doorCenter - doorHalfWidth && x < doorCenter + doorHalfWidth) continue;
                 if (Math.abs(x - cx) < 200 && Math.abs(y - cy) < 200) continue;
+                if (hasVault && Math.abs(x - rx) < halfW + 70 && Math.abs(y - ry) < halfH + 70) continue;
 
                 props.push({
                      id: `hwall_${wIdx}_${i}_${Math.round(x)}`,
@@ -287,6 +421,7 @@ function generateProps(mapSize, count, biome, seed) {
             for (let y = yStart + startMargin; y < yEnd - endMargin; y += step) {
                 if (y > doorCenter - doorHalfWidth && y < doorCenter + doorHalfWidth) continue;
                 if (Math.abs(x - cx) < 200 && Math.abs(y - cy) < 200) continue;
+                if (hasVault && Math.abs(x - rx) < halfW + 70 && Math.abs(y - ry) < halfH + 70) continue;
 
                 let tooClose = false;
                 for (const p of props) {
@@ -367,7 +502,7 @@ function generateProps(mapSize, count, biome, seed) {
         props[i].animated = true;
     }
 
-    return props;
+    return { props, doors };
 }
 
 // ──────────────────────────────────────────────
@@ -617,7 +752,8 @@ class HunterRoom {
         const mapDef     = HUNTER_MAPS[this.theme] || HUNTER_MAPS['Depot Alpha'];
         this.mapSize     = { w: mapDef.w, h: mapDef.h };
         this.seed        = Math.floor(Math.random() * 0xFFFFFF);
-        this.props       = generateProps(this.mapSize, mapDef.propCount, this.theme, this.seed);
+        const genResult  = generateProps(this.mapSize, mapDef.propCount, this.theme, this.seed);
+        this.props       = genResult.props;
         this.hunterHealth = HUNTER_HEALTH_MAX;
         this.state       = 'PLAYING';
         
@@ -628,10 +764,7 @@ class HunterRoom {
         this.hunterPowers = { droneUsed: false };
 
         if (this.theme === 'Depot Alpha') {
-            this.doors = [
-                { id: 'door_A', x: 1200, y: 1000, w: 200, h: 40, consoleX: 1080, consoleY: 1000, open: false },
-                { id: 'door_B', x: 1800, y: 1400, w: 200, h: 40, consoleX: 1680, consoleY: 1400, open: false }
-            ];
+            this.doors = genResult.doors;
         } else if (this.theme === 'Bloc Tactique') {
             this.teleporters = [
                 { id: 'teleport_A', x: 500, y: 500, targetX: 2300, targetY: 1700 },
