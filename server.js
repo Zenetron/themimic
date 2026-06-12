@@ -676,15 +676,7 @@ class GameRoom {
             this.handleBlend(socket.id);
         });
 
-        socket.on('startNow', () => {
-            // Host-only force start
-            if (socket.id !== this.hostId) return;
-            if (this.state !== 'COUNTDOWN' && this.state !== 'LOBBY') return;
-            const p = this.players[socket.id];
-            if (!p || !p.isReady) return;
-            this.stopCountdown();
-            this.startGame();
-        });
+
 
         socket.on('soloTest', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
@@ -1623,6 +1615,24 @@ io.on('connection', (socket) => {
     socket.on('backToLobby', () => {
         if (currentRoom) currentRoom.resetToLobby();
         if (currentHunterRoom) currentHunterRoom.resetToLobby();
+    });
+
+    // Global startNow handler for both modes
+    socket.on('startNow', () => {
+        console.log('[server.js GLOBAL] startNow received from', socket.id);
+        if (currentHunterRoom && currentHunterRoom.hostId === socket.id) {
+            console.log('[server.js] Starting HunterRoom game');
+            currentHunterRoom.stopCountdown();
+            currentHunterRoom.startGame();
+            return;
+        }
+        if (currentRoom && currentRoom.hostId === socket.id) {
+            console.log('[server.js] Starting GameRoom game');
+            currentRoom.stopCountdown();
+            currentRoom.startGame();
+            return;
+        }
+        console.log('[server.js] startNow: not host in any room');
     });
 
     // ── HUNTER MODE ─────────────────────────────────────────

@@ -567,6 +567,7 @@ class HunterRoom {
             disguiseAngle:0,
             eliminated:   false,
             hasDisguised: false,
+            lives:        3,
             // Ghost powerups
             smokeUsed:    false,
             sprintUsed:   false,
@@ -616,14 +617,7 @@ class HunterRoom {
             }
         });
 
-        socket.on('startNow', () => {
-            if (socket.id !== this.hostId) return;
-            if (this.state !== 'COUNTDOWN' && this.state !== 'LOBBY') return;
-            const p = this.players[socket.id];
-            if (!p || !p.isReady) return;
-            this.stopCountdown();
-            this.startGame();
-        });
+
 
         socket.on('hunterInput', (input) => {
             const p = this.players[socket.id];
@@ -796,6 +790,7 @@ class HunterRoom {
                     disguiseAngle: 0,
                     eliminated: false,
                     hasDisguised: false,
+                    lives: 3,
                     smokeUsed: false,
                     sprintUsed: false,
                     sprintActive: false,
@@ -828,14 +823,70 @@ class HunterRoom {
             p.disguised    = false;
             p.disguiseType = null;
             p.hasDisguised = false;
+            p.lives        = 3;
             p.smokeUsed    = false;
             p.sprintUsed   = false;
             p.sprintActive = false;
             p.sprintEndsAt = 0;
             p.teleportReadyAt = 0;
             p.role         = (id === this.hunterId) ? 'hunter' : 'prop';
-            p.x            = spawns[i].x;
-            p.y            = spawns[i].y;
+            
+            // Find a clear spawn position (not on top of props, players, or vault interior)
+            let spawnX = spawns[i].x;
+            let spawnY = spawns[i].y;
+            let attempts = 0;
+            const maxAttempts = 60;
+
+            // Derive vault bounding box from the door (Depot Alpha only)
+            const vaultDoor = this.doors && this.doors.find(d => d.id === 'door_vault');
+            const vaultCX = vaultDoor ? vaultDoor.x : -9999;
+            const vaultCY = vaultDoor ? vaultDoor.y + 140 : -9999;
+            const vaultHW = 200, vaultHH = 160; // slightly larger than actual (180×140) for safety margin
+
+            const hasCollision = (x, y) => {
+                // Reject positions inside the closed vault interior
+                if (vaultDoor && !vaultDoor.open) {
+                    if (Math.abs(x - vaultCX) < vaultHW && Math.abs(y - vaultCY) < vaultHH) {
+                        return true;
+                    }
+                }
+                // Check props
+                for (const prop of this.props) {
+                    const dx = x - prop.x;
+                    const dy = y - prop.y;
+                    if (dx * dx + dy * dy < (prop.radius + 25) * (prop.radius + 25)) {
+                        return true;
+                    }
+                }
+                // Check already placed players
+                for (let j = 0; j < i; j++) {
+                    const otherP = this.players[ids[j]];
+                    const dx = x - otherP.x;
+                    const dy = y - otherP.y;
+                    if (dx * dx + dy * dy < 40 * 40) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            // Phase 1: try positions near the assigned spawn point (radius 50–150)
+            while (hasCollision(spawnX, spawnY) && attempts < 30) {
+                const angle = Math.random() * Math.PI * 2;
+                const offset = 50 + Math.random() * 100;
+                spawnX = spawns[i].x + Math.cos(angle) * offset;
+                spawnY = spawns[i].y + Math.sin(angle) * offset;
+                attempts++;
+            }
+            // Phase 2: if still stuck, search the full map randomly
+            while (hasCollision(spawnX, spawnY) && attempts < maxAttempts) {
+                spawnX = 80 + Math.random() * (this.mapSize.w - 160);
+                spawnY = 80 + Math.random() * (this.mapSize.h - 160);
+                attempts++;
+            }
+            
+            p.x            = spawnX;
+            p.y            = spawnY;
             p.angle        = 0;
             p.input        = { up: false, down: false, left: false, right: false };
 
@@ -1045,10 +1096,14 @@ class HunterRoom {
         }
 
         if (hitProp) {
-            hitProp.eliminated = true;
-            hitProp.disguised  = false;
+            hitProp.lives--;
+            if (hitProp.lives <= 0) {
+                hitProp.eliminated = true;
+                hitProp.disguised  = false;
+                this.io.to(this.roomId).emit('hunterEliminated', { id: hitId });
+            }
             this.io.to(this.roomId).emit('hunterTagEffect', { x: clickX, y: clickY, result: 'hit' });
-            this.io.to(this.roomId).emit('hunterEliminated', { id: hitId });
+            this.io.to(this.roomId).emit('hunterLivesUpdated', { id: hitId, lives: hitProp.lives });
 
             const propsAlive = Object.values(this.players).filter(pl => pl.role === 'prop' && !pl.eliminated);
             if (propsAlive.length === 0) {
@@ -1598,10 +1653,10 @@ class HunterRoom {
                             const hdy = p.y - hunter.y;
                             const hdist = Math.sqrt(hdx * hdx + hdy * hdy);
                             if (hdist > 10) {
-                                p.input.up = hdy > 0;
-                                p.input.down = hdy < 0;
-                                p.input.left = hdx > 0;
-                                p.input.right = hdx < 0;
+                                p.input.up    = hdy < 0;
+                                p.input.down  = hdy > 0;
+                                p.input.left  = hdx < 0;
+                                p.input.right = hdx > 0;
                             } else {
                                 p.input = { up: false, down: false, left: false, right: false };
                             }
@@ -1725,6 +1780,7 @@ class HunterRoom {
                 disguiseAngle: p.disguiseAngle,
                 disguiseRadius:p.disguiseRadius,
                 eliminated:    p.eliminated,
+                lives:         p.lives,
                 avatar:       p.avatar,
                 num:          p.playerNum,
                 // powerup status

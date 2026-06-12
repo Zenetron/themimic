@@ -19,7 +19,7 @@
             --gold:    #f0ad4e;
             --green:   #6fa86f;
             --panel:   rgba(25, 30, 25, 0.96);
-            --border:  rgba(139, 168, 134, 0.22);
+            --border:  rgba(139, 168, 134, 0.09);
         }
 
         *, *::before, *::after { box-sizing: border-box; }
@@ -68,8 +68,8 @@
                 0% calc(100% - 18px), 0% 18px
             );
             box-shadow:
-                0 0 0 1px rgba(0,255,255,0.12),
-                0 0 40px rgba(0,255,255,0.08),
+                0 0 0 1px rgba(0,255,255,0.05),
+                0 0 30px rgba(0,255,255,0.05),
                 inset 0 0 60px rgba(0,0,0,0.6);
             animation: panelIn 0.35s cubic-bezier(0.22,1,0.36,1);
         }
@@ -148,13 +148,13 @@
         }
         .panel::before {
             top: -1px; left: -1px;
-            border-width: 1.5px 0 0 1.5px;
-            box-shadow: -4px -4px 12px rgba(0,255,255,0.4);
+            border-width: 1px 0 0 1px;
+            box-shadow: -3px -3px 8px rgba(0,255,255,0.15);
         }
         .panel::after {
             bottom: -1px; right: -1px;
-            border-width: 0 1.5px 1.5px 0;
-            box-shadow: 4px 4px 12px rgba(0,255,255,0.3);
+            border-width: 0 1px 1px 0;
+            box-shadow: 3px 3px 8px rgba(0,255,255,0.10);
         }
 
         /* Scanline overlay */
@@ -369,6 +369,83 @@
             letter-spacing: 4px;
             color: rgba(217, 83, 79, 0.65);
             margin-bottom: 2px;
+        }
+
+        /* ─── Share widget ───────────────────────────── */
+        #shareWidget {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 18px;
+            width: 100%;
+        }
+        #shareUrlBox {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            background: rgba(0,0,0,0.45);
+            border: 1px solid rgba(139,168,134,0.14);
+            clip-path: polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
+            overflow: hidden;
+        }
+        #shareUrlText {
+            flex: 1;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.72em;
+            letter-spacing: 1.5px;
+            color: rgba(255,255,255,0.45);
+            padding: 8px 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            user-select: all;
+        }
+        #btnShare {
+            margin: 0;
+            padding: 8px 18px;
+            font-size: 0.75em;
+            letter-spacing: 2px;
+            border: none;
+            border-left: 1px solid rgba(139,168,134,0.14);
+            clip-path: none;
+            background: rgba(139,168,134,0.07);
+            color: var(--cyan);
+            flex-shrink: 0;
+            transition: background 0.15s, color 0.15s;
+            position: relative;
+            overflow: hidden;
+        }
+        #btnShare:hover {
+            background: rgba(139,168,134,0.18);
+            color: #fff;
+            box-shadow: none;
+        }
+        #btnShare.copied {
+            background: rgba(111,168,111,0.18);
+            color: #aee8ae;
+        }
+        #shareCopiedFlash {
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(20,26,20,0.97);
+            border: 1px solid rgba(139,168,134,0.3);
+            color: var(--cyan);
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.68em;
+            letter-spacing: 2px;
+            padding: 5px 12px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            clip-path: polygon(6px 0%,100% 0%,calc(100% - 6px) 100%,0% 100%);
+            transition: opacity 0.15s;
+            z-index: 20;
+        }
+        #shareCopiedFlash.visible {
+            opacity: 1;
         }
 
         /* ─── Lobby status ───────────────────────────── */
@@ -618,16 +695,16 @@
         }
         .slot .slot-icon { font-size: 1.3em; line-height: 1; }
         .slot.human {
-            border-color: var(--green);
+            border-color: rgba(111, 168, 111, 0.5);
             color: var(--green);
-            background: rgba(0,255,136,0.07);
-            box-shadow: 0 0 8px rgba(0,255,136,0.2);
+            background: rgba(0,255,136,0.04);
+            box-shadow: none;
         }
         .slot.human-ready {
-            border-color: var(--cyan);
+            border-color: rgba(139, 168, 134, 0.7);
             color: var(--cyan);
-            background: rgba(0,255,255,0.07);
-            box-shadow: 0 0 10px rgba(0,255,255,0.3);
+            background: rgba(0,255,255,0.04);
+            box-shadow: 0 0 6px rgba(0,255,255,0.12);
         }
         .slot.bot {
             border-color: var(--pink);
@@ -1109,6 +1186,16 @@
             <p class="room-code-label" id="lblRoomCode">── ROOM CODE ──</p>
             <div id="roomCodeDisplay">----</div>
 
+            <div id="shareWidget">
+                <div id="shareUrlBox">
+                    <span id="shareUrlText">—</span>
+                    <button id="btnShare">
+                        <span id="btnShareLabel">⬡ COPY LINK</span>
+                        <span id="shareCopiedFlash">✓ COPIÉ !</span>
+                    </button>
+                </div>
+            </div>
+
             <div class="settings-grid">
                 <div style="grid-column: span 2;">
                     <label id="lblUnitModel">Unit Model</label>
@@ -1123,8 +1210,8 @@
                 <div id="hostSettings" style="grid-column: span 2;">
                     <label id="lblArena">Arena</label>
                     <select id="themeSelect" style="margin-bottom:10px">
-                        <option value="Military Base">⚙ INDUSTRIAL SECTOR — Sync Events</option>
-                        <option value="Weapon Warehouse">⛓ WEAPON WAREHOUSE — Alarm Lockdown</option>
+                        <option value="Military Base">🏭 INDUSTRIAL SECTOR — Sync Events</option>
+                        <option value="Weapon Warehouse">⛓️ WEAPON WAREHOUSE — Alarm Lockdown</option>
                         <option value="Command Center">📡 COMMAND CENTER — Radar Sweep</option>
                     </select>
                     <button id="btnTogglePublic" style="width:100%;margin:0;font-size:0.8em;padding:10px;">⬡ Salon PRIVÉ (Cliquer pour publier)</button>
@@ -1155,12 +1242,12 @@
                 </div>
                 <p class="countdown-msg" id="countdownMsg">WAITING FOR PLAYERS...</p>
                 <div class="slot-row" id="slotRow"></div>
-                <button id="btnStartNow" class="btn-primary"
-                    style="display:none;font-size:0.85em;padding:10px 24px;">
-                    ⚡ START NOW
-                </button>
             </div>
 
+            <button id="btnStartNow" class="btn-primary"
+                style="display:none;font-size:0.85em;padding:10px 24px;">
+                ⚡ START NOW
+            </button>
             <button class="btn-primary" id="btnReady">▶ READY</button>
             <br>
             <button id="btnSoloTest" style="font-size:0.72em;opacity:0.5;margin-top:4px;padding:8px 16px;">⬡ SOLO TEST</button>
@@ -1205,6 +1292,47 @@
         const joinCodeInput = document.getElementById('joinCodeInput');
         const roomCodeDisplay = document.getElementById('roomCodeDisplay');
         const btnReady = document.getElementById('btnReady');
+
+        // ── Share widget ─────────────────────────────────
+        const shareWidget   = document.getElementById('shareWidget');
+        const shareUrlText  = document.getElementById('shareUrlText');
+        const btnShare      = document.getElementById('btnShare');
+        const btnShareLabel = document.getElementById('btnShareLabel');
+        const shareCopied   = document.getElementById('shareCopiedFlash');
+        let shareUrl        = '';
+        let shareCopyTimer  = null;
+
+        function updateShareWidget(code, mode) {
+            const base = window.location.origin + window.location.pathname;
+            const param = mode === 'hunter' ? 'hunter' : 'code';
+            shareUrl = `${base}?${param}=${code}`;
+            shareUrlText.textContent = shareUrl.replace(/^https?:\/\//, '');
+        }
+
+        btnShare.addEventListener('click', () => {
+            if (!shareUrl) return;
+            const doCopy = () => {
+                navigator.clipboard.writeText(shareUrl).catch(() => {
+                    const ta = document.createElement('textarea');
+                    ta.value = shareUrl;
+                    ta.style.cssText = 'position:fixed;opacity:0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                });
+            };
+            doCopy();
+            btnShare.classList.add('copied');
+            btnShareLabel.textContent = '✓ COPIÉ !';
+            shareCopied.classList.add('visible');
+            clearTimeout(shareCopyTimer);
+            shareCopyTimer = setTimeout(() => {
+                btnShare.classList.remove('copied');
+                btnShareLabel.textContent = '⬡ COPY LINK';
+                shareCopied.classList.remove('visible');
+            }, 1800);
+        });
         const btnTogglePublic = document.getElementById('btnTogglePublic');
         const lobbyStatus = document.getElementById('lobbyStatus');
         const livesCount = document.getElementById('livesCount');
@@ -1492,13 +1620,14 @@
                 selectedMap = select.value;
                 document.getElementById('btnSoloTest').style.display = 'none';
                 document.getElementById('btnHunterMode').style.display = 'none';
+                console.log('[updateLobbyThemeOptions] isHost:', isHost, 'roomType:', roomType);
                 if (isHost) {
                     document.getElementById('btnStartNow').style.display = 'inline-block';
                 }
             } else {
                 select.innerHTML = `
-                    <option value="Military Base">${isEng ? '⚙ INDUSTRIAL SECTOR — Sync Events' : '⚙ SECTEUR INDUSTRIEL — Événements de Sync'}</option>
-                    <option value="Weapon Warehouse">${isEng ? '⛓ WEAPON WAREHOUSE — Alarm Lockdown' : '⛓ ENTREPÔT D\'ARMES — Confinement Alerte'}</option>
+                    <option value="Military Base">${isEng ? '🏭 INDUSTRIAL SECTOR — Sync Events' : '🏭 SECTEUR INDUSTRIEL — Événements de Sync'}</option>
+                    <option value="Weapon Warehouse">${isEng ? '⛓️ WEAPON WAREHOUSE — Alarm Lockdown' : '⛓️ ENTREPÔT D\'ARMES — Confinement Alerte'}</option>
                     <option value="Command Center">${isEng ? '📡 COMMAND CENTER — Radar Sweep' : '📡 CENTRE DE COMMANDE — Balayage Radar'}</option>
                 `;
                 document.getElementById('btnSoloTest').style.display = 'inline-block';
@@ -1756,6 +1885,33 @@
 
         socket.on('connect', () => {
             localPlayerId = socket.id;
+
+            // Auto-join from shared URL (?code=XXXX or ?hunter=XXXX)
+            const urlParams = new URLSearchParams(window.location.search);
+            const autoMimic  = urlParams.get('code');
+            const autoHunter = urlParams.get('hunter');
+            if (autoMimic) {
+                joinCodeInput.value = autoMimic.toUpperCase();
+                // Switch to mimic mode visually
+                document.getElementById('btnSelectMimic')?.classList.add('active');
+                document.getElementById('btnSelectHunter')?.classList.remove('active');
+                selectedMode = 'mimic';
+                socket.emit('joinRoom', autoMimic.toUpperCase());
+                roomType = 'mimic';
+                isHost = false;
+            } else if (autoHunter) {
+                joinCodeInput.value = autoHunter.toUpperCase();
+                document.getElementById('btnSelectHunter')?.classList.add('active');
+                document.getElementById('btnSelectMimic')?.classList.remove('active');
+                selectedMode = 'hunter';
+                socket.emit('joinHunterRoom', autoHunter.toUpperCase());
+                roomType = 'hunter';
+                isHost = false;
+            }
+            // Clean the URL without reloading
+            if (autoMimic || autoHunter) {
+                window.history.replaceState({}, '', window.location.pathname);
+            }
         });
         if (socket && socket.id) {
             localPlayerId = socket.id;
@@ -1841,6 +1997,8 @@
             roomCodeDisplay.textContent = data.code;
             updateLobbyThemeOptions();
             document.getElementById('hostSettings').style.display = 'block';
+            updateShareWidget(data.code, 'hunter');
+            shareWidget.style.display = 'flex';
         });
 
         socket.on('hunterRoomJoined', (data) => {
@@ -1851,6 +2009,7 @@
             roomCodeDisplay.textContent = data.code;
             updateLobbyThemeOptions();
             document.getElementById('hostSettings').style.display = 'none';
+            shareWidget.style.display = 'none';
         });
 
         socket.on('roomCreated', (code) => {
@@ -1860,6 +2019,8 @@
             roomCodeDisplay.textContent = code;
             updateLobbyThemeOptions();
             document.getElementById('hostSettings').style.display = 'block';
+            updateShareWidget(code, 'mimic');
+            shareWidget.style.display = 'flex';
         });
 
         socket.on('roomJoined', (code) => {
@@ -1870,6 +2031,7 @@
             updateLobbyThemeOptions();
             // Guest doesn't pick theme or public status
             document.getElementById('hostSettings').style.display = 'none';
+            shareWidget.style.display = 'none';
         });
 
         btnTogglePublic.addEventListener('click', () => {
@@ -2348,6 +2510,16 @@
             updateGhostIndicators();
         });
 
+        socket.on('hunterLivesUpdated', (data) => {
+            if (G.players[data.id]) {
+                G.players[data.id].lives = data.lives;
+            }
+            // Update lives display if it's the local player
+            if (data.id === localPlayerId) {
+                updateLivesGraphically(data.lives);
+            }
+        });
+
         socket.on('propHit', (data) => {
             // Update player lives
             if (G.players[data.id]) {
@@ -2475,6 +2647,7 @@
         });
 
         btnStartNow.addEventListener('click', () => {
+            console.log('[btnStartNow] clicked, emitting startNow');
             socket.emit('startNow');
         });
 
@@ -2531,7 +2704,8 @@
                 slotRow.appendChild(div);
             });
 
-            // Show 'Start Now' only to host who is ready
+            // Show 'Start Now' to host (regardless of ready status)
+            console.log('[lobbyCountdown] isHost:', isHost, 'displaying btnStartNow');
             btnStartNow.style.display = (isHost) ? 'inline-block' : 'none';
 
             // Make sure countdown wrap is visible
@@ -4767,10 +4941,11 @@
             ctx.translate(prop.x, prop.y);
             ctx.rotate(prop.angle);
 
-            if (prop.animated) {
-                const pulse = 0.9 + 0.1 * Math.sin(now / 300);
-                ctx.scale(pulse, pulse);
-            }
+            // Disabled pulse animation to prevent bots from blinking
+            // if (prop.animated) {
+            //     const pulse = 0.9 + 0.1 * Math.sin(now / 300);
+            //     ctx.scale(pulse, pulse);
+            // }
 
             drawPropShape(ctx, prop.type, prop.radius, alpha);
             ctx.restore();
@@ -4814,7 +4989,7 @@
             }
 
             if (p.disguised && p.disguiseType) {
-                let alpha = isMe ? 0.55 : 1.0;
+                let alpha = isMe ? 0.55 : (id.startsWith('bot_') ? 0.85 : 1.0);
                 if (p.inSmoke) {
                     let revealedByDrone = false;
                     if (G.droneZone) {
