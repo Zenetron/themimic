@@ -679,14 +679,15 @@ class HunterRoom {
     getLobbyStatus() {
         const humans = Object.values(this.players);
         return {
-            roomId:      this.roomId,
-            gameMode:    'hunter',
-            playerCount: humans.length,
-            readyCount:  humans.filter(p => p.isReady).length,
-            theme:       this.theme,
-            isPublic:    this.isPublic,
-            state:       this.state,
-            players:     humans.map(p => ({
+            roomId:       this.roomId,
+            gameMode:     'hunter',
+            playerCount:  humans.length,
+            readyCount:   humans.filter(p => p.isReady).length,
+            theme:        this.theme,
+            isPublic:     this.isPublic,
+            isQuickMatch: this.isQuickMatch,
+            state:        this.state,
+            players:      humans.map(p => ({
                 num:    p.playerNum,
                 ready:  p.isReady,
                 avatar: p.avatar
@@ -805,7 +806,8 @@ class HunterRoom {
                     aiTargetY: 0,
                     aiTargetPropId: null,
                     aiTagCooldown: 0,
-                    aiPowerupCooldown: 0
+                    aiPowerupCooldown: 0,
+                    aiInspectTimer: 0
                 };
                 botIndex++;
             }
@@ -977,6 +979,9 @@ class HunterRoom {
         }
         if (p.isBot && p.role === 'hunter') {
             speed = PLAYER_SPEED * (0.8 + 0.3 * (p.aiDifficulty || 0.7));
+        }
+        if (p.role === 'hunter' && this.phase === 'RECON') {
+            speed = PLAYER_SPEED * 1.6;
         }
 
         p.vx = 0; p.vy = 0;
@@ -1249,24 +1254,16 @@ class HunterRoom {
             }
         }
 
-        // Smoke handling
+        // Smoke handling + movement in a single pass over players
         this.smokes = this.smokes.filter(s => now < s.endsAt);
         for (const p of Object.values(this.players)) {
             p.inSmoke = false;
             for (const s of this.smokes) {
                 const dx = p.x - s.x;
                 const dy = p.y - s.y;
-                if (dx * dx + dy * dy < s.radius * s.radius) {
-                    p.inSmoke = true;
-                    break;
-                }
+                if (dx * dx + dy * dy < s.radius * s.radius) { p.inSmoke = true; break; }
             }
-        }
-
-        for (const p of Object.values(this.players)) {
-            if (p.isBot) {
-                this._updateBotAI(p, dt);
-            }
+            if (p.isBot) this._updateBotAI(p, dt);
             this._updateMovement(p);
         }
 
@@ -1277,11 +1274,11 @@ class HunterRoom {
                 players:      this._serializePlayers(),
                 phase:        this.phase,
                 phaseEndsAt:  this.phaseEndsAt,
-                remaining:    Math.max(0, this.phaseEndsAt - Date.now()),
+                remaining:    Math.max(0, this.phaseEndsAt - now),
                 hunterHealth: this.hunterHealth,
                 doors:        this.doors.map(d => ({ id: d.id, x: d.x, y: d.y, w: d.w, h: d.h, consoleX: d.consoleX, consoleY: d.consoleY, open: d.open })),
-                smokes:       this.smokes.map(s => ({ x: s.x, y: s.y, radius: s.radius, remaining: Math.max(0, s.endsAt - Date.now()) })),
-                droneZone:    (this.droneRevealEndsAt && Date.now() < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null
+                smokes:       this.smokes.map(s => ({ x: s.x, y: s.y, radius: s.radius, remaining: Math.max(0, s.endsAt - now) })),
+                droneZone:    (this.droneRevealEndsAt && now < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null
             });
         }
     }
@@ -1292,10 +1289,6 @@ class HunterRoom {
             return;
         }
 
-        if (p.aiTagCooldown === undefined) p.aiTagCooldown = 0;
-        if (p.aiPowerupCooldown === undefined) p.aiPowerupCooldown = 0;
-        if (p.aiInspectTimer === undefined) p.aiInspectTimer = 0;
-        
         p.aiTagCooldown = Math.max(0, p.aiTagCooldown - dt);
         p.aiPowerupCooldown = Math.max(0, p.aiPowerupCooldown - dt);
         p.aiInspectTimer = Math.max(0, p.aiInspectTimer - dt);

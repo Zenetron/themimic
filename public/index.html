@@ -717,6 +717,10 @@
             0%,100% { opacity: 1; }
             50%      { opacity: 0.55; }
         }
+        @keyframes slotAppear {
+            from { opacity: 0; transform: scale(0.65) translateY(10px); }
+            to   { opacity: 1; transform: scale(1)    translateY(0); }
+        }
 
         /* Bot-fill flash overlay */
         #botFillFlash {
@@ -1347,6 +1351,7 @@
         minimapCanvas.height = MM_SIZE;
 
         // Game State Client
+        let localIsReady = false;
         let localPlayerId = socket ? socket.id : null;
         let playersInfo = {};
         let spectateTargetId = null;
@@ -1368,6 +1373,8 @@
         let totalPlayersCount = 0;
         let tagEffects = []; // Visual clicks {x,y,time}
         let hitFeedbackEffects = []; // Hunter hit feedback {x,y,time,type}
+        let deathParticles = []; // Death burst particles {x,y,vx,vy,life,decay,size,col}
+        let shakePow = 0; // Current screen shake magnitude
 
         let pickupEffects = []; // Powerup texts {x,y,text,color,time}
         let CAMERA = { x: 0, y: 0 };
@@ -1434,7 +1441,7 @@
                 mainMenuTitleMimic: "THE MIMIC",
                 mainMenuSubMimic: "// Prototype v0.1 — Trouver & Éliminer //",
                 mainMenuTitleHunter: "PROP HUNT",
-                mainMenuSubHunter: "// Opération Hunter — Search & Tag //",
+                mainMenuSubHunter: "// Opération Hunter — Traquer & Taguer //",
                 lblMatchEnded: "── MATCH TERMINÉ ──",
                 lblSystemShutdown: "Arrêt du système...",
                 btnPlayAgain: "↺ Rejouer",
@@ -1881,6 +1888,113 @@
             musicNodes = {};
         }
 
+        // ── Screen shake (CSS transform on canvas — zero draw-call cost) ──
+        function triggerShake(power) { shakePow = Math.max(shakePow, power); }
+
+        function applyShake() {
+            if (shakePow > 0.2) {
+                canvas.style.transform = `translate(${(Math.random()*2-1)*shakePow|0}px,${(Math.random()*2-1)*shakePow|0}px)`;
+                shakePow *= 0.78;
+            } else if (shakePow) {
+                canvas.style.transform = '';
+                shakePow = 0;
+            }
+        }
+
+        // ── Death particles ──
+        function spawnDeathParticles(x, y, col, count) {
+            const n = count || 14;
+            for (let i = 0; i < n; i++) {
+                const angle = (Math.PI * 2 * i / n) + Math.random() * 0.5;
+                const speed = 2 + Math.random() * 5;
+                deathParticles.push({
+                    x, y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 1,
+                    decay: 0.022 + Math.random() * 0.018,
+                    size: 2.5 + Math.random() * 4,
+                    col
+                });
+            }
+        }
+
+        function drawDeathParticles(camX, camY, scale) {
+            if (!deathParticles.length) return;
+            ctx.save();
+            ctx.scale(scale || 1, scale || 1);
+            ctx.translate(-camX, -camY);
+            for (let i = deathParticles.length - 1; i >= 0; i--) {
+                const p = deathParticles[i];
+                p.x += p.vx; p.y += p.vy;
+                p.vx *= 0.91; p.vy *= 0.91;
+                p.life -= p.decay;
+                if (p.life <= 0) { deathParticles.splice(i, 1); continue; }
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.col;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+
+        // ── Lobby ambient music ──
+        // 16-step grid at 8th-note = 280ms. C minor pentatonic phrase that loops.
+        // null = rest, [freq, holdBeats, vol] = note.
+        const LOBBY_GRID = [
+            [261.6, 1, 0.11],  // C4  tap
+            null,
+            [392.0, 1, 0.10],  // G4  tap
+            [466.2, 1, 0.10],  // Bb4 tap
+            null,
+            [523.3, 2, 0.13],  // C5  held (2 beats)
+            null,
+            null,
+            [392.0, 1, 0.10],  // G4  down
+            null,
+            [311.1, 1, 0.09],  // Eb4
+            [261.6, 3, 0.12],  // C4  long resolve
+            null,
+            null,
+            null,
+            null,
+        ];
+        const LOBBY_STEP_MS = 280;
+        let lobbyMusicInterval = null;
+        let lobbyStep = 0;
+
+        function startLobbyMusic() {
+            stopLobbyMusic();
+            ensureAudioCtx();
+            lobbyStep = 0;
+            lobbyMusicInterval = setInterval(() => {
+                if (!audioCtx) return;
+                const cell = LOBBY_GRID[lobbyStep % LOBBY_GRID.length];
+                lobbyStep++;
+                if (!cell) return;
+                const [freq, hold, vol] = cell;
+                const holdSec = hold * LOBBY_STEP_MS / 1000;
+                const osc = audioCtx.createOscillator();
+                const env = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                env.gain.setValueAtTime(0, audioCtx.currentTime);
+                env.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + 0.06);
+                env.gain.setValueAtTime(vol, audioCtx.currentTime + holdSec * 0.6);
+                env.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + holdSec + 0.15);
+                osc.connect(env);
+                env.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + holdSec + 0.2);
+            }, LOBBY_STEP_MS);
+        }
+
+        function stopLobbyMusic() {
+            if (lobbyMusicInterval) { clearInterval(lobbyMusicInterval); lobbyMusicInterval = null; }
+        }
+
 
 
         socket.on('connect', () => {
@@ -1999,6 +2113,7 @@
             document.getElementById('hostSettings').style.display = 'block';
             updateShareWidget(data.code, 'hunter');
             shareWidget.style.display = 'flex';
+            startLobbyMusic();
         });
 
         socket.on('hunterRoomJoined', (data) => {
@@ -2010,6 +2125,7 @@
             updateLobbyThemeOptions();
             document.getElementById('hostSettings').style.display = 'none';
             shareWidget.style.display = 'none';
+            startLobbyMusic();
         });
 
         socket.on('roomCreated', (code) => {
@@ -2021,6 +2137,7 @@
             document.getElementById('hostSettings').style.display = 'block';
             updateShareWidget(code, 'mimic');
             shareWidget.style.display = 'flex';
+            startLobbyMusic();
         });
 
         socket.on('roomJoined', (code) => {
@@ -2032,6 +2149,7 @@
             // Guest doesn't pick theme or public status
             document.getElementById('hostSettings').style.display = 'none';
             shareWidget.style.display = 'none';
+            startLobbyMusic();
         });
 
         btnTogglePublic.addEventListener('click', () => {
@@ -2051,8 +2169,10 @@
 
             if (status.state === 'LOBBY') {
                 countdownWrap.classList.remove('active');
-                btnReady.textContent = (currentLang === 'en') ? "▶ READY" : "▶ PRÊT";
-                btnReady.disabled = false;
+                if (!localIsReady) {
+                    btnReady.textContent = (currentLang === 'en') ? "▶ READY" : "▶ PRÊT";
+                    btnReady.disabled = false;
+                }
 
                 // Reset states
                 G.state = 'LOBBY';
@@ -2085,6 +2205,7 @@
                 lobbyMenu.classList.remove('hidden');
 
                 // Reset ready button state
+                localIsReady = false;
                 btnReady.textContent = (currentLang === 'en') ? "▶ READY" : "▶ PRÊT";
                 btnReady.disabled = false;
             }
@@ -2104,16 +2225,21 @@
             }
 
             if (isHost) {
-                if (status.isPublic) {
-                    btnTogglePublic.textContent = (currentLang === 'en') ? "Room is PUBLIC (Click to Hide)" : "Salon PUBLIC (Cliquer pour masquer)";
-                    btnTogglePublic.style.color = "#00ff00";
-                    btnTogglePublic.style.borderColor = "#00ff00";
-                    btnTogglePublic.style.boxShadow = "0 0 10px rgba(0, 255, 0, 0.2) inset";
+                if (status.isQuickMatch) {
+                    btnTogglePublic.style.display = 'none';
                 } else {
-                    btnTogglePublic.textContent = (currentLang === 'en') ? "Room is PRIVATE (Click to Publish)" : "Salon PRIVÉ (Cliquer pour publier)";
-                    btnTogglePublic.style.color = "var(--accent-color)";
-                    btnTogglePublic.style.borderColor = "var(--accent-color)";
-                    btnTogglePublic.style.boxShadow = "0 0 10px rgba(0, 255, 255, 0.2) inset";
+                    btnTogglePublic.style.display = '';
+                    if (status.isPublic) {
+                        btnTogglePublic.textContent = (currentLang === 'en') ? "Room is PUBLIC (Click to Hide)" : "Salon PUBLIC (Cliquer pour masquer)";
+                        btnTogglePublic.style.color = "#00ff00";
+                        btnTogglePublic.style.borderColor = "#00ff00";
+                        btnTogglePublic.style.boxShadow = "0 0 10px rgba(0, 255, 0, 0.2) inset";
+                    } else {
+                        btnTogglePublic.textContent = (currentLang === 'en') ? "Room is PRIVATE (Click to Publish)" : "Salon PRIVÉ (Cliquer pour publier)";
+                        btnTogglePublic.style.color = "var(--accent-color)";
+                        btnTogglePublic.style.borderColor = "var(--accent-color)";
+                        btnTogglePublic.style.boxShadow = "0 0 10px rgba(0, 255, 255, 0.2) inset";
+                    }
                 }
             } else {
                 document.getElementById('themeSelect').value = status.theme;
@@ -2382,7 +2508,9 @@
             // Clear visual effects from previous game
             hitFeedbackEffects = [];
             tagEffects = [];
-            
+            deathParticles = [];
+            stopLobbyMusic();
+
             lobbyMenu.classList.add('hidden');
             document.getElementById('hunterHUD').classList.remove('hidden');
             
@@ -2508,6 +2636,9 @@
                 showNotif(t('ghostEliminated'), 'success');
             }
             updateGhostIndicators();
+            triggerShake(10);
+            const ep = interpolatedPlayers[data.id] || G.players[data.id];
+            if (ep) spawnDeathParticles(ep.x, ep.y, '#ff6644', 22);
         });
 
         socket.on('hunterLivesUpdated', (data) => {
@@ -2549,6 +2680,8 @@
         socket.on('hunterTagEffect', (data) => {
             tagEffects.push({ x: data.x, y: data.y, by: data.by || hunterId, time: Date.now(), result: data.result });
             sfxTag();
+            triggerShake(data.result === 'hit' ? 5 : 2);
+            if (data.result === 'hit') spawnDeathParticles(data.x, data.y, '#50e878', 8);
         });
 
         socket.on('hunterHealth', (data) => {
@@ -2556,6 +2689,7 @@
             updateHealthHUD();
             const msg = data.reason === 'decoy' ? t('wrongDecoy') : t('wrongMiss');
             if (myRole === 'hunter') showNotif(msg, 'danger');
+            triggerShake(5);
         });
 
         socket.on('hunterHitFeedback', (data) => {
@@ -2641,6 +2775,7 @@
                 avatar: document.getElementById('avatarSelect').value,
                 theme: document.getElementById('themeSelect').value
             });
+            localIsReady = true;
             btnReady.textContent = (currentLang === 'en') ? "WAITING..." : "ATTENTE...";
             btnReady.disabled = true;
             countdownWrap.classList.add('active');
@@ -2692,15 +2827,22 @@
             slots.forEach((slot, i) => {
                 const div = document.createElement('div');
                 if (slot.type === 'empty') {
-                    div.className = 'slot bot';
-                    div.innerHTML = `<span class="slot-icon">🤖</span><span>AI</span>`;
+                    if (data.isQuickMatch) {
+                        div.className = 'slot bot';
+                        div.innerHTML = `<span class="slot-icon">🤖</span><span>AI</span>`;
+                    } else {
+                        div.className = 'slot human';
+                        div.innerHTML = `<span class="slot-icon">○</span><span>OPEN</span>`;
+                    }
                 } else if (slot.ready) {
                     div.className = 'slot human-ready';
                     div.innerHTML = `<span class="slot-icon">▶</span><span>P${slot.num}</span>`;
                 } else {
                     div.className = 'slot human';
-                    div.innerHTML = `<span class="slot-icon">□</span><span>P${slot.num}</span>`;
+                    div.innerHTML = `<span class="slot-icon">◎</span><span>P${slot.num}</span>`;
                 }
+                div.style.animation = 'slotAppear 0.18s ease both';
+                div.style.animationDelay = (i * 60) + 'ms';
                 slotRow.appendChild(div);
             });
 
@@ -2740,14 +2882,17 @@
 
         socket.on('gameStart', (data) => {
             localPlayerId = socket.id;
+            localIsReady = false;
             lobbyMenu.classList.add('hidden');
             hud.style.display = 'block';
             minimapEl.style.display = 'block';
             playerCounterEl.style.display = 'block';
-            
+            stopLobbyMusic();
+
             // Clear visual effects from previous game
             hitFeedbackEffects = [];
             tagEffects = [];
+            deathParticles = [];
             
             theme = data.theme;
             mapRule = data.mapRule || 'sync';
@@ -2832,6 +2977,8 @@
 
         socket.on('tagEffect', (data) => {
             tagEffects.push({ x: data.x, y: data.y, by: data.by, time: Date.now() });
+            triggerShake(4);
+            spawnDeathParticles(data.x, data.y, '#ff5533', 10);
             sfxTag();
         });
 
@@ -5911,6 +6058,7 @@
                     }
                     if (!revealedByDrone) continue;
                 }
+                if (myRole === 'prop' && p.role === 'hunter' && id !== localPlayerId) continue;
                 const px = p.x * sx;
                 const py = p.y * sy;
                 let col = '#50c878';
@@ -6052,6 +6200,7 @@
             }
 
             for (const [id, p] of Object.entries(G.players)) {
+                if (myRole === 'prop' && p.role === 'hunter' && id !== localPlayerId) continue;
                 const ip = interpolatedPlayers[id] || p;
                 const renderData = {
                     ...p,
@@ -6085,6 +6234,7 @@
             }
 
             drawHunterEffects();
+            drawDeathParticles(G.cam.x, G.cam.y, G.cam.scale);
             ctx.restore();
 
             // Heartbeat beep system for local hunter
@@ -6149,6 +6299,7 @@
         }
 
         function renderLoop() {
+            applyShake();
             if (roomType === 'hunter') {
                 if (G.state === 'LOBBY') return;
                 renderHunter();
@@ -7004,6 +7155,7 @@
                 ctx.restore();
             }
 
+            drawDeathParticles(CAMERA.x, CAMERA.y, 1);
             ctx.restore();
 
             // Alarm lockdown screen tint (Weapon Warehouse)
@@ -7120,6 +7272,66 @@
 
             requestAnimationFrame(renderLoop);
         }
+
+        // ─── Lightweight test suite (runs once on load, logs to console) ────
+        (function runTests() {
+            let passed = 0, failed = 0;
+            function assert(label, cond) {
+                if (cond) { passed++; }
+                else { failed++; console.error('[TEST FAIL]', label); }
+            }
+
+            // triggerShake — max wins, never goes negative
+            shakePow = 0;
+            triggerShake(5);
+            assert('triggerShake sets power', shakePow === 5);
+            triggerShake(3);
+            assert('triggerShake keeps max', shakePow === 5);
+            triggerShake(8);
+            assert('triggerShake raises when higher', shakePow === 8);
+
+            // applyShake — clears when power is tiny
+            shakePow = 0.1;
+            canvas.style.transform = 'translate(3px,3px)';
+            applyShake();
+            assert('applyShake clears sub-threshold', shakePow === 0 && canvas.style.transform === '');
+
+            // spawnDeathParticles — correct count
+            deathParticles = [];
+            spawnDeathParticles(100, 200, '#ff0000', 10);
+            assert('spawnDeathParticles count', deathParticles.length === 10);
+            assert('spawnDeathParticles life=1', deathParticles.every(p => p.life === 1));
+            assert('spawnDeathParticles origin x', deathParticles.every(p => p.x === 100));
+
+            // drawDeathParticles — particles age and are removed
+            deathParticles = [];
+            spawnDeathParticles(0, 0, '#00ff00', 3);
+            deathParticles.forEach(p => { p.decay = 1.5; }); // force expiry
+            drawDeathParticles(0, 0, 1);
+            assert('drawDeathParticles removes expired particles', deathParticles.length === 0);
+
+            // Slot cascade — smoke test (DOM round-trip)
+            const tempRow = document.createElement('div');
+            [{ type: 'human', ready: false, num: 1 }, { type: 'empty' }].forEach((slot, i) => {
+                const d = document.createElement('div');
+                d.style.animation = 'slotAppear 0.18s ease both';
+                d.style.animationDelay = (i * 60) + 'ms';
+                tempRow.appendChild(d);
+            });
+            assert('slotCascade delay P1', tempRow.children[0].style.animationDelay === '0ms');
+            assert('slotCascade delay P2', tempRow.children[1].style.animationDelay === '60ms');
+
+            // updateShareWidget — builds correct URL shapes
+            shareUrl = '';
+            updateShareWidget('ABCD', 'mimic');
+            assert('shareWidget mimic param', shareUrl.includes('?code=ABCD'));
+            updateShareWidget('WXYZ', 'hunter');
+            assert('shareWidget hunter param', shareUrl.includes('?hunter=WXYZ'));
+
+            // Summary
+            const status = failed === 0 ? '✓ All' : `✗ ${failed} failed,`;
+            console.log(`[TESTS] ${status} ${passed} passed`);
+        })();
 
     </script>
 </body>

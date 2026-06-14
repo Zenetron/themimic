@@ -768,6 +768,7 @@ class GameRoom {
             readyCount: humans.filter(p => p.isReady).length,
             theme: this.theme,
             isPublic: this.isPublic,
+            isQuickMatch: this.isQuickMatch,
             state: this.state,
             gameMode: this.gameMode || 'classic'
         };
@@ -795,10 +796,6 @@ class GameRoom {
             ghostIds: this.ghostIds || []
         };
         return out;
-    }
-
-    checkStart() {
-        // Legacy — no longer used (countdown replaces it)
     }
 
     startGame() {
@@ -1603,10 +1600,10 @@ io.on('connection', (socket) => {
     });
 
     socket.on('togglePublic', () => {
-        if (currentRoom && currentRoom.players[socket.id]?.playerNum === 1) {
+        if (currentRoom && currentRoom.players[socket.id]?.playerNum === 1 && !currentRoom.isQuickMatch) {
             currentRoom.isPublic = !currentRoom.isPublic;
             io.to(currentRoom.roomId).emit('roomStatus', currentRoom.getLobbyStatus());
-        } else if (currentHunterRoom && currentHunterRoom.players[socket.id]?.playerNum === 1) {
+        } else if (currentHunterRoom && currentHunterRoom.players[socket.id]?.playerNum === 1 && !currentHunterRoom.isQuickMatch) {
             currentHunterRoom.isPublic = !currentHunterRoom.isPublic;
             io.to(currentHunterRoom.roomId).emit('roomStatus', currentHunterRoom.getLobbyStatus());
         }
