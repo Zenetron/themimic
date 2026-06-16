@@ -3,7 +3,11 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const path = require('path');
-const { HunterRoom, HUNTER_MAPS } = require('./hunter-room');
+const { HunterRoom, HUNTER_MAPS, pendingRejoin } = require('./hunter-room');
+
+function generateSessionToken() {
+    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -139,7 +143,8 @@ class Entity {
     }
 
     update(dt, mapSize, rockDecorations, bushDecorations, allEntities, room) {
-        const frozen = room && room.isAlarmFreeze;
+        const isEndGameFreeze = room && room.endGameTriggered && (room.endGameMode === 'FREEZE' || room.endGameMode === 'GEL');
+        const frozen = (room && room.isAlarmFreeze) || (isEndGameFreeze && !this.isPlayer);
         if (!frozen) {
             if (this.isPlayer && !this.isBotPlayer) {
                 this.updatePlayerInput(room);
@@ -602,8 +607,15 @@ class GameRoom {
         this.countdownTimer   = null;  // setInterval handle
         this.countdownSeconds = 0;     // current seconds remaining
         this.MAX_COUNTDOWN    = 45;    // seconds to wait before bot-fill
-        this.MAX_PLAYERS      = 4;
+        this.MAX_PLAYERS      = 6;
         this.hostId           = hostSocket.id;
+
+        // End-game Mode properties
+        this.endGameMode = 'STORM';
+        this.endGameTriggered = false;
+        this.endGameCountdownRemaining = 30000;
+        this.stormRadius = 2500;
+        this.lastBotPurgeTime = 0;
 
         this.addPlayer(hostSocket, 1);
     }
@@ -617,6 +629,10 @@ class GameRoom {
             avatar: 'Combat-Operative'
         };
 
+        const token = generateSessionToken();
+        this.players[socket.id].sessionToken = token;
+        socket.emit('sessionToken', { token, roomCode: this.roomId, isHunter: false });
+
         socket.join(this.roomId);
 
         // If countdown is running, a new real player joined — extend or reset timer
@@ -628,6 +644,11 @@ class GameRoom {
             this.broadcastCountdown();
         }
 
+        this._bindSocket(socket);
+        io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
+    }
+
+    _bindSocket(socket) {
         // Listeners for this room
         socket.on('playerReady', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
@@ -645,7 +666,7 @@ class GameRoom {
                 const allReady = pKeys.every(k => this.players[k].isReady);
                 if (pKeys.length >= this.MAX_PLAYERS && allReady) {
                     this.stopCountdown();
-                    this.startGame();
+                    this.startShuffle();
                     return;
                 }
 
@@ -676,8 +697,6 @@ class GameRoom {
             this.handleBlend(socket.id);
         });
 
-
-
         socket.on('soloTest', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
             const p = this.players[socket.id];
@@ -686,7 +705,7 @@ class GameRoom {
                 p.avatar = data.avatar || 'Combat-Operative';
                 if (data.theme) this.theme = data.theme;
                 this.stopCountdown();
-                this.startGame();
+                this.startShuffle();
             }
         });
 
@@ -700,8 +719,6 @@ class GameRoom {
             if (this.state !== 'PLAYING') return;
             this.handleTagAttempt(socket.id, data.x, data.y);
         });
-
-        io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
     }
 
     // ─── Countdown logic ────────────────────────────────────
@@ -726,7 +743,7 @@ class GameRoom {
                 }
                 // Signal clients: bot fill happening
                 io.to(this.roomId).emit('botFill');
-                setTimeout(() => this.startGame(), 2000); // 2s drama delay
+                setTimeout(() => this.startShuffle(), 2000); // 2s drama delay
                 return;
             }
 
@@ -739,22 +756,42 @@ class GameRoom {
             clearInterval(this.countdownTimer);
             this.countdownTimer = null;
         }
+        if (this.shuffleTimeout) {
+            clearTimeout(this.shuffleTimeout);
+            this.shuffleTimeout = null;
+        }
         if (this.state === 'COUNTDOWN') this.state = 'LOBBY';
     }
 
     broadcastCountdown() {
         const humans = Object.values(this.players).filter(p => !p.isBot);
+        const realCount = humans.length;
+
+        // Last 5s of quick match solo (only 1 real player): reveal fake P2-P6 one by one
+        let fakeCount = 0;
+        if (this.isQuickMatch && realCount === 1 && this.countdownSeconds <= 5 && this.countdownSeconds > 0) {
+            fakeCount = Math.min(this.MAX_PLAYERS - realCount, 6 - this.countdownSeconds);
+        }
+
         const slots = Array.from({ length: this.MAX_PLAYERS }, (_, i) => {
-            const p = humans[i];
-            if (!p) return { type: 'empty' };
-            return { type: 'player', ready: p.isReady, num: p.playerNum };
+            if (i < realCount) {
+                const p = humans[i];
+                return { type: 'player', ready: p.isReady, num: p.playerNum };
+            }
+            if (this.isQuickMatch && i < realCount + fakeCount) {
+                return { type: 'player', ready: true, num: i + 1 };
+            }
+            // Quick match: show searching slots (not empty)
+            if (this.isQuickMatch) return { type: 'searching' };
+            return { type: 'empty' };
         });
+
         io.to(this.roomId).emit('lobbyCountdown', {
             seconds: this.isQuickMatch ? this.countdownSeconds : null,
             total: this.MAX_COUNTDOWN,
             slots,
-            readyCount: humans.filter(p => p.isReady).length,
-            playerCount: humans.length,
+            readyCount: humans.filter(p => p.isReady).length + fakeCount,
+            playerCount: realCount + fakeCount,
             hostId: this.hostId,
             isQuickMatch: this.isQuickMatch
         });
@@ -798,23 +835,71 @@ class GameRoom {
         return out;
     }
 
+    startShuffle() {
+        if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
+        this.state = 'SHUFFLING';
+
+        // Mark all human players as ready
+        for (const p of Object.values(this.players)) {
+            p.isReady = true;
+        }
+
+        // Choose random map (theme)
+        const themes = [
+            'Military Base', 'Forest', 'Arcade Grid',
+            'Weapon Warehouse', 'Cave', 'Toy Factory',
+            'Command Center', 'Desert', 'Micro-Circuit'
+        ];
+        this.theme = themes[Math.floor(Math.random() * themes.length)];
+
+        // Choose random end-game mode
+        const modes = ['STORM', 'FREEZE', 'PURGE', 'TEMPETE', 'GEL', 'DISPARITION'];
+        this.endGameMode = modes[Math.floor(Math.random() * modes.length)];
+
+        // Shuffling duration (shorter for tests)
+        const isTest = (this.roomId === 'MIMIC' || this.roomId.toLowerCase().includes('test'));
+        const duration = isTest ? 500 : 3000;
+
+        // Emit shuffle command to all clients
+        io.to(this.roomId).emit('roomShuffle', {
+            map: this.theme,
+            maps: themes,
+            mode: this.endGameMode,
+            duration: duration
+        });
+
+        // Set timeout to start the game after the shuffling animation + drama delay
+        const serverDelay = isTest ? 500 : (duration + 1500);
+        this.shuffleTimeout = setTimeout(() => {
+            this.startGame();
+        }, serverDelay);
+    }
+
     startGame() {
         this.state = 'PLAYING';
+        // Mark all players as ready
+        for (const p of Object.values(this.players)) {
+            p.isReady = true;
+        }
         // If Hunter mode selected, use hunter-specific start flow
         if (this.gameMode === 'hunter') {
             this.startHunterGame();
             return;
         }
         this.entities = [];
+        this.endGameTriggered = false;
+        const modeTimers = { STORM: 30000, FREEZE: 60000, PURGE: 30000, TEMPETE: 60000, GEL: 60000, DISPARITION: 30000 };
+        this.endGameCountdownRemaining = modeTimers[this.endGameMode] || 30000;
 
-        const maxRealPlayers = 4;
+        const maxRealPlayers = 6;
         const currentRealPlayerIds = Object.keys(this.players);
         const currentRealPlayerCount = currentRealPlayerIds.length;
-        const shouldFillBots = this.isQuickMatch || (currentRealPlayerCount === 1);
+        const shouldFillBots = currentRealPlayerCount === 1;
         if (shouldFillBots && currentRealPlayerCount < maxRealPlayers) {
-            const botNames = ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA'];
+            const botNames = this.isQuickMatch
+                ? ['P2', 'P3', 'P4', 'P5', 'P6']
+                : ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA', '🤖 SCOUT-EPSILON', '🤖 MEDIC-ZETA'];
             const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
-            
             let botIdx = 0;
             for (let i = 1; i <= maxRealPlayers; i++) {
                 const numTaken = Object.values(this.players).some(p => p.playerNum === i);
@@ -835,13 +920,17 @@ class GameRoom {
         }
 
         const pCount = Object.keys(this.players).length;
-        if (pCount <= 3) {
-            this.mapSize = { w: 2500, h: 2000 };
-            this.totalEntities = 40;
+        if (pCount <= 2) {
+            this.mapSize = { w: 2000, h: 1800 };
+            this.totalEntities = 32;
+        } else if (pCount <= 4) {
+            this.mapSize = { w: 2800, h: 2400 };
+            this.totalEntities = 55;
         } else {
-            this.mapSize = { w: 3500, h: 3000 };
-            this.totalEntities = 70;
+            this.mapSize = { w: 3800, h: 3200 };
+            this.totalEntities = 85;
         }
+        this.stormRadius = Math.max(this.mapSize.w, this.mapSize.h);
 
         const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
 
@@ -926,12 +1015,14 @@ class GameRoom {
     startHunterGame() {
         this.entities = [];
 
-        const maxRealPlayers = 4;
+        const maxRealPlayers = 6;
         const currentRealPlayerIds = Object.keys(this.players);
         const currentRealPlayerCount = currentRealPlayerIds.length;
-        const shouldFillBots = this.isQuickMatch || (currentRealPlayerCount === 1);
+        const shouldFillBots = currentRealPlayerCount === 1;
         if (shouldFillBots && currentRealPlayerCount < maxRealPlayers) {
-            const botNames = ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA'];
+            const botNames = this.isQuickMatch
+                ? ['P2', 'P3', 'P4', 'P5', 'P6']
+                : ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA', '🤖 SCOUT-EPSILON', '🤖 MEDIC-ZETA'];
             const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
             let botIdx = 0;
             for (let i = 1; i <= maxRealPlayers; i++) {
@@ -953,10 +1044,12 @@ class GameRoom {
         }
 
         const pCount = Object.keys(this.players).length;
-        if (pCount <= 3) {
-            this.mapSize = { w: 2500, h: 2000 };
+        if (pCount <= 2) {
+            this.mapSize = { w: 2000, h: 1800 };
+        } else if (pCount <= 4) {
+            this.mapSize = { w: 2800, h: 2400 };
         } else {
-            this.mapSize = { w: 3500, h: 3000 };
+            this.mapSize = { w: 3800, h: 3200 };
         }
 
         // Choose hunter: first human player (non-bot), else first player
@@ -1159,7 +1252,9 @@ class GameRoom {
                 this.entities = this.entities.filter(e => e.id !== shooterEnt.id);
                 const living = Object.keys(this.players).filter(id => this.players[id].lives > 0);
                 this.cachedAlivePlayers = living.length;
-                if (living.length <= 1) this.endGame(living[0] || null);
+                if (living.length <= 1) {
+                    setTimeout(() => { if (this.state === 'PLAYING') this.endGame(living[0] || null); }, 800);
+                }
             }
             return;
         }
@@ -1169,23 +1264,20 @@ class GameRoom {
                 // HIT OPPONENT PLAYER!
                 const targetPlayer = this.players[hitEntity.id];
                 if (targetPlayer && targetPlayer.lives > 0) {
-                    // Eliminate instantly
-                    targetPlayer.lives = 0;
-                    
-                    // Broadcast updated lives
+                    targetPlayer.lives--;
                     io.to(this.roomId).emit('livesUpdated', this.getPlayersInfo());
 
-                    // Remove target player entity from the game immediately
-                    this.entities = this.entities.filter(e => e.id !== hitEntity.id);
+                    if (targetPlayer.lives <= 0) {
+                        this.entities = this.entities.filter(e => e.id !== hitEntity.id);
+                    }
 
-                    // Check if game is over (only 1 player with lives > 0 left)
                     const living = Object.keys(this.players).filter(id => this.players[id].lives > 0);
                     this.cachedAlivePlayers = living.length;
-                    
+
                     if (living.length === 1) {
-                        this.endGame(living[0]); // that player wins!
+                        setTimeout(() => { if (this.state === 'PLAYING') this.endGame(living[0]); }, 800);
                     } else if (living.length === 0) {
-                        this.endGame(null); // draw
+                        setTimeout(() => { if (this.state === 'PLAYING') this.endGame(null); }, 800);
                     }
                 }
             } else {
@@ -1195,7 +1287,6 @@ class GameRoom {
                 io.to(this.roomId).emit('livesUpdated', this.getPlayersInfo());
 
                 if (shooter.lives <= 0) {
-                    // Remove shooter entity from the game
                     this.entities = this.entities.filter(e => e.id !== shooterEnt.id);
                 }
 
@@ -1203,9 +1294,9 @@ class GameRoom {
                 this.cachedAlivePlayers = living.length;
 
                 if (living.length === 1) {
-                    this.endGame(living[0]);
+                    setTimeout(() => { if (this.state === 'PLAYING') this.endGame(living[0]); }, 800);
                 } else if (living.length === 0) {
-                    this.endGame(null);
+                    setTimeout(() => { if (this.state === 'PLAYING') this.endGame(null); }, 800);
                 }
             }
         }
@@ -1458,10 +1549,87 @@ class GameRoom {
         }
 
         const mapRule = getMapRule(this.theme);
-        if (mapRule === 'sync') {
-            this.updateSyncEvent(dt);
-        } else if (mapRule === 'alarm') {
-            this.updateAlarmEvent(dt, now);
+        if (!this.endGameTriggered) {
+            if (mapRule === 'sync') {
+                this.updateSyncEvent(dt);
+            } else if (mapRule === 'alarm') {
+                this.updateAlarmEvent(dt, now);
+            }
+        } else if (this.isSyncEventActive) {
+            // Stop any active sync event when endgame triggers
+            this.isSyncEventActive = false;
+            io.to(this.roomId).emit('syncEvent', { active: false });
+        }
+
+        // Handle classic endgame modes
+        if (this.state === 'PLAYING' && this.gameMode !== 'hunter') {
+            if (!this.endGameTriggered) {
+                this.endGameCountdownRemaining = Math.max(0, this.endGameCountdownRemaining - dt);
+                if (this.endGameCountdownRemaining <= 0) {
+                    this.endGameTriggered = true;
+                    io.to(this.roomId).emit('classicEndGameModeTriggered', { mode: this.endGameMode });
+                    if (this.endGameMode === 'PURGE' || this.endGameMode === 'DISPARITION') {
+                        this.lastBotPurgeTime = now;
+                    }
+                }
+            } else {
+                if (this.endGameMode === 'STORM' || this.endGameMode === 'TEMPETE') {
+                    // Shrink storm radius from max map size (2500 or 3500) to 150 over 60 seconds
+                    const maxDim = Math.max(this.mapSize.w, this.mapSize.h);
+                    const shrinkSpeed = (maxDim - 150) / 60; // units per second
+                    this.stormRadius = Math.max(150, this.stormRadius - shrinkSpeed * (dt / 1000));
+
+                    // Center of the map
+                    const cx = this.mapSize.w / 2;
+                    const cy = this.mapSize.h / 2;
+
+                    // Apply storm damage to classic players
+                    for (const [id, pl] of Object.entries(this.players)) {
+                        if (pl.lives > 0) {
+                            const pEnt = this.entities.find(e => e.id === id);
+                            if (pEnt) {
+                                const dx = pEnt.x - cx;
+                                const dy = pEnt.y - cy;
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+                                if (dist > this.stormRadius) {
+                                    pl.timeOutsideStorm = (pl.timeOutsideStorm || 0) + dt;
+                                    if (pl.timeOutsideStorm >= 1000) {
+                                        pl.timeOutsideStorm = 0;
+                                        pl.lives--;
+                                        io.to(this.roomId).emit('livesUpdated', this.getPlayersInfo());
+                                        if (pl.lives <= 0) {
+                                            // Eliminate
+                                            this.entities = this.entities.filter(e => e.id !== id);
+                                        }
+                                        // Check if game is over (only 1 player with lives > 0 left)
+                                        const living = Object.keys(this.players).filter(pid => this.players[pid].lives > 0);
+                                        this.cachedAlivePlayers = living.length;
+                                        if (living.length === 1) {
+                                            this.endGame(living[0]);
+                                            return;
+                                        } else if (living.length === 0) {
+                                            this.endGame(null);
+                                            return;
+                                        }
+                                    }
+                                } else {
+                                    pl.timeOutsideStorm = 0;
+                                }
+                            }
+                        }
+                    }
+                } else if (this.endGameMode === 'PURGE' || this.endGameMode === 'DISPARITION') {
+                    if (now - this.lastBotPurgeTime >= 5000) {
+                        this.lastBotPurgeTime = now;
+                        // Purge a random decoy bot entity (not a real/bot player)
+                        const decoyBots = this.entities.filter(e => !e.isPlayer);
+                        if (decoyBots.length > 0) {
+                            const botToPurge = decoyBots[Math.floor(Math.random() * decoyBots.length)];
+                            this.entities = this.entities.filter(e => e.id !== botToPurge.id);
+                        }
+                    }
+                }
+            }
         }
 
         // Update all entities
@@ -1487,7 +1655,11 @@ class GameRoom {
                     i: this.items,
                     a: this.cachedAlivePlayers,
                     t: this.cachedTotalPlayers,
-                    p: this.getActivePings(now)
+                    p: this.getActivePings(now),
+                    egm: this.endGameMode,
+                    egt: this.endGameTriggered,
+                    egc: this.endGameCountdownRemaining,
+                    sr: this.stormRadius
                 };
                 if (mapRule === 'radar') {
                     statePayload.ra = Math.round(this.radarAngle * 100) / 100;
@@ -1499,9 +1671,53 @@ class GameRoom {
 
 
     handleDisconnect(socketId) {
-        delete this.players[socketId];
+        const p = this.players[socketId];
+        if (!p) return;
 
-        // Clean up room if no human players are left
+        // Host migration
+        if (socketId === this.hostId) {
+            const next = Object.entries(this.players)
+                .filter(([id, pl]) => !pl.isBot && id !== socketId)
+                .sort(([, a], [, b]) => a.playerNum - b.playerNum)[0];
+            if (next) {
+                this.hostId = next[0];
+                io.to(this.roomId).emit('hostMigrated', { newHostId: this.hostId });
+            }
+        }
+
+        // Grace period during game for human players
+        if (this.state === 'PLAYING' && !p.isBot && p.sessionToken) {
+            const token = p.sessionToken;
+            p.disconnected = true;
+            p.socket = null;
+
+            pendingRejoin[token] = {
+                room: this,
+                socketId,
+                isHunter: false,
+                timer: setTimeout(() => {
+                    delete pendingRejoin[token];
+                    this._permanentRemove(socketId);
+                }, 15000)
+            };
+
+            io.to(this.roomId).emit('playerDisconnected', { socketId, graceSecs: 15 });
+            return;
+        }
+
+        delete this.players[socketId];
+        this._checkAfterRemoval(socketId);
+    }
+
+    _permanentRemove(socketId) {
+        const p = this.players[socketId];
+        if (!p) return;
+        delete this.players[socketId];
+        this._checkAfterRemoval(socketId);
+        io.to(this.roomId).emit('playerLeft', { socketId });
+    }
+
+    _checkAfterRemoval(socketId) {
         const humansLeft = Object.values(this.players).filter(p => !p.isBot);
         if (humansLeft.length === 0) {
             this.stopCountdown();
@@ -1511,24 +1727,45 @@ class GameRoom {
         }
 
         if (this.state === 'PLAYING') {
-            // Remove their entity if it exists
             this.entities = this.entities.filter(e => e.id !== socketId);
-            
             const living = Object.keys(this.players).filter(id => this.players[id].lives > 0);
             this.cachedAlivePlayers = living.length;
-            
-            if (living.length === 1) {
-                this.endGame(living[0]);
-            } else if (living.length === 0) {
-                if (this.interval) clearInterval(this.interval);
-                delete rooms[this.roomId];
-            }
+            if (living.length === 1) this.endGame(living[0]);
+            else if (living.length === 0) this.endGame(null);
         } else if (this.state === 'LOBBY' || this.state === 'COUNTDOWN') {
-            if (this.state === 'COUNTDOWN') {
-                this.broadcastCountdown();
-            }
+            if (this.state === 'COUNTDOWN') this.broadcastCountdown();
             io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
         }
+    }
+
+    rejoinPlayer(newSocket, oldSocketId) {
+        const p = this.players[oldSocketId];
+        if (!p) { newSocket.emit('rejoinFailed'); return; }
+
+        const token = generateSessionToken();
+        this.players[newSocket.id] = { ...p, socket: newSocket, disconnected: false, sessionToken: token };
+        delete this.players[oldSocketId];
+
+        const ent = this.entities.find(e => e.id === oldSocketId);
+        if (ent) ent.id = newSocket.id;
+
+        newSocket.join(this.roomId);
+        this._bindSocket(newSocket);
+
+        newSocket.emit('rejoinSuccess', {
+            mode: 'mimic',
+            sessionToken: token,
+            roomCode: this.roomId,
+            isHunter: false,
+            lives: p.lives,
+            theme: this.theme,
+            mapRule: getMapRule(this.theme),
+            mapSize: this.mapSize,
+            playersInfo: this.getPlayersInfo(),
+            decorations: this.decorations
+        });
+
+        io.to(this.roomId).emit('playerRejoined', { socketId: newSocket.id, oldSocketId });
     }
 }
 
@@ -1548,7 +1785,7 @@ io.on('connection', (socket) => {
         code = code.toUpperCase();
         const room = rooms[code];
         if (room) {
-            if (Object.keys(room.players).length < 4 && (room.state === 'LOBBY' || room.state === 'COUNTDOWN')) {
+            if (Object.keys(room.players).length < room.MAX_PLAYERS && (room.state === 'LOBBY' || room.state === 'COUNTDOWN')) {
                 currentRoom = room;
                 room.addPlayer(socket, Object.keys(room.players).length + 1);
                 socket.emit('roomJoined', code);
@@ -1564,7 +1801,7 @@ io.on('connection', (socket) => {
         const mode = (data && data.mode) ? data.mode : 'mimic';
         if (mode === 'hunter') {
             const availableRooms = Object.values(hunterRooms).filter(
-                r => r.isPublic && Object.keys(r.players).length < 4 && r.state === 'LOBBY'
+                r => r.isPublic && Object.keys(r.players).length < r.MAX_PLAYERS && r.state === 'LOBBY'
             );
             if (availableRooms.length > 0) {
                 const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
@@ -1581,7 +1818,7 @@ io.on('connection', (socket) => {
             }
         } else {
             const availableRooms = Object.values(rooms).filter(
-                r => r.isPublic && Object.keys(r.players).length < 4 && r.state === 'LOBBY'
+                r => r.isPublic && Object.keys(r.players).length < r.MAX_PLAYERS && r.state === 'LOBBY'
             );
             if (availableRooms.length > 0) {
                 const randomRoom = availableRooms[Math.floor(Math.random() * availableRooms.length)];
@@ -1618,15 +1855,15 @@ io.on('connection', (socket) => {
     socket.on('startNow', () => {
         console.log('[server.js GLOBAL] startNow received from', socket.id);
         if (currentHunterRoom && currentHunterRoom.hostId === socket.id) {
-            console.log('[server.js] Starting HunterRoom game');
+            console.log('[server.js] Starting HunterRoom shuffle');
             currentHunterRoom.stopCountdown();
-            currentHunterRoom.startGame();
+            currentHunterRoom.startShuffle();
             return;
         }
         if (currentRoom && currentRoom.hostId === socket.id) {
             console.log('[server.js] Starting GameRoom game');
             currentRoom.stopCountdown();
-            currentRoom.startGame();
+            currentRoom.startShuffle();
             return;
         }
         console.log('[server.js] startNow: not host in any room');
@@ -1665,6 +1902,26 @@ io.on('connection', (socket) => {
         currentHunterRoom = room;
         room.addPlayer(socket, Object.keys(room.players).length + 1);
         socket.emit('hunterRoomJoined', { code, maps: Object.keys(HUNTER_MAPS) });
+    });
+
+    // ── REJOIN ──────────────────────────────────────────────
+    socket.on('rejoinRoom', ({ token }) => {
+        if (!token) return;
+        const entry = pendingRejoin[token];
+        if (!entry) {
+            socket.emit('rejoinFailed');
+            return;
+        }
+        clearTimeout(entry.timer);
+        delete pendingRejoin[token];
+
+        if (entry.isHunter) {
+            currentHunterRoom = entry.room;
+            entry.room.rejoinPlayer(socket, entry.socketId);
+        } else {
+            currentRoom = entry.room;
+            entry.room.rejoinPlayer(socket, entry.socketId);
+        }
     });
 
     // ── DISCONNECT ──────────────────────────────────────────

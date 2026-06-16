@@ -1,7 +1,7 @@
 {
-  "name": "poc_jeu2",
+  "name": "mimic-ops",
   "version": "1.0.0",
-  "description": "",
+  "description": "Mimic Ops — multiplayer hide-and-seek browser game",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

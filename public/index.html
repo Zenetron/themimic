@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>THE MIMIC - Online</title>
+    <title>MIMIC OPS - Online</title>
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
@@ -676,12 +676,13 @@
         /* Slot indicators */
         .slot-row {
             display: flex;
-            gap: 8px;
+            flex-wrap: wrap;
+            gap: 6px;
             justify-content: center;
             margin-bottom: 12px;
         }
         .slot {
-            width: 54px; height: 42px;
+            width: 48px; height: 42px;
             border: 1px solid rgba(0,255,255,0.2);
             background: rgba(0,0,0,0.4);
             display: flex; flex-direction: column;
@@ -712,6 +713,16 @@
             background: rgba(217, 83, 79, 0.07);
             box-shadow: none;
             animation: slotPulse 1.2s ease-in-out infinite;
+        }
+        .slot.searching {
+            border-color: rgba(139, 168, 134, 0.2);
+            color: rgba(139, 168, 134, 0.35);
+            background: rgba(0,0,0,0.2);
+            animation: slotSearch 2s ease-in-out infinite;
+        }
+        @keyframes slotSearch {
+            0%, 100% { opacity: 0.4; }
+            50%       { opacity: 0.9; }
         }
         @keyframes slotPulse {
             0%,100% { opacity: 1; }
@@ -1029,11 +1040,632 @@
         .notif-success { background: var(--green); color: #131613; }
         .notif-danger  { background: var(--pink); color: #fff; }
         .notif-info    { background: var(--cyan); color: #131613; }
+
+        /* Cyberpunk Slot Machine Map/Mode Shuffle Overlay styling */
+        #shuffleOverlay {
+            background:
+                repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.06) 3px, rgba(0,0,0,0.06) 4px),
+                radial-gradient(ellipse at center, rgba(10,22,10,0.97) 0%, rgba(4,8,4,0.99) 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+        }
+        .shuffle-container {
+            text-align: center;
+            background: rgba(8, 14, 8, 0.92);
+            border: 1px solid rgba(111, 168, 111, 0.4);
+            box-shadow:
+                0 0 0 3px rgba(8, 14, 8, 0.9),
+                0 0 0 4px rgba(111, 168, 111, 0.15),
+                0 0 60px rgba(111, 168, 111, 0.12),
+                inset 0 0 40px rgba(0, 0, 0, 0.7);
+            padding: 0;
+            max-width: 680px;
+            width: 92%;
+            position: relative;
+            clip-path: polygon(
+                24px 0%, calc(100% - 24px) 0%,
+                100% 24px, 100% calc(100% - 24px),
+                calc(100% - 24px) 100%, 24px 100%,
+                0% calc(100% - 24px), 0% 24px
+            );
+            overflow: hidden;
+        }
+        /* Warning stripe header */
+        .shuffle-header-stripe {
+            background: repeating-linear-gradient(
+                -45deg,
+                rgba(80, 60, 0, 0.85),
+                rgba(80, 60, 0, 0.85) 10px,
+                rgba(20, 15, 0, 0.85) 10px,
+                rgba(20, 15, 0, 0.85) 20px
+            );
+            border-bottom: 1px solid rgba(200, 160, 0, 0.3);
+            padding: 6px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .shuffle-header-id {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65em;
+            color: rgba(200, 160, 0, 0.7);
+            letter-spacing: 2px;
+        }
+        /* Scanlines over container */
+        .shuffle-container::after {
+            content: '';
+            position: absolute; inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 3px);
+            pointer-events: none;
+            z-index: 10;
+        }
+        .shuffle-inner {
+            padding: 24px 36px 28px;
+            position: relative;
+        }
+        /* Corner brackets */
+        .shuffle-corner { position: absolute; width: 18px; height: 18px; }
+        .shuffle-corner.tl { top: 6px; left: 6px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+        .shuffle-corner.tr { top: 6px; right: 6px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+        .shuffle-corner.bl { bottom: 6px; left: 6px; border-bottom: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+        .shuffle-corner.br { bottom: 6px; right: 6px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+        .shuffle-title {
+            font-family: 'Black Ops One', sans-serif;
+            font-size: 1.05em;
+            color: var(--cyan);
+            text-shadow: 0 0 12px rgba(140, 168, 133, 0.8);
+            margin: 0 0 4px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        .shuffle-subtitle {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.62em;
+            color: rgba(111,168,111,0.45);
+            letter-spacing: 3px;
+            margin-bottom: 22px;
+        }
+        .slots-wrapper {
+            display: flex;
+            justify-content: space-around;
+            align-items: stretch;
+            margin: 0 0 20px;
+            gap: 16px;
+        }
+        .slot-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .slot-label {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.68em;
+            color: rgba(200, 160, 0, 0.85);
+            letter-spacing: 3px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .slot-label::before, .slot-label::after {
+            content: '';
+            height: 1px;
+            flex: 1;
+            background: rgba(200, 160, 0, 0.3);
+        }
+        .slot-box {
+            width: 100%;
+            height: 88px;
+            background: rgba(3, 8, 3, 0.95);
+            border: 1px solid rgba(111, 168, 111, 0.25);
+            box-shadow:
+                0 0 0 1px rgba(0,0,0,0.8),
+                inset 0 0 20px rgba(0,0,0,0.9),
+                inset 0 1px 0 rgba(111,168,111,0.08);
+            overflow: hidden;
+            position: relative;
+        }
+        /* Selection line overlay */
+        .slot-box::before {
+            content: '';
+            position: absolute;
+            left: 0; right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            height: 88px;
+            background: linear-gradient(
+                to bottom,
+                transparent 0%,
+                rgba(111,168,111,0.04) 20%,
+                rgba(111,168,111,0.08) 50%,
+                rgba(111,168,111,0.04) 80%,
+                transparent 100%
+            );
+            border-top: 1px solid rgba(111,168,111,0.2);
+            border-bottom: 1px solid rgba(111,168,111,0.2);
+            pointer-events: none;
+            z-index: 2;
+        }
+        .slot-reel {
+            position: absolute;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            top: 0;
+            left: 0;
+            transition: transform 0.1s;
+        }
+        .slot-reel div {
+            height: 88px;
+            line-height: 88px;
+            font-family: 'Black Ops One', sans-serif;
+            font-size: 1.35em;
+            color: var(--cyan);
+            text-align: center;
+            letter-spacing: 2px;
+            text-shadow: 0 0 8px rgba(140, 168, 133, 0.6);
+            text-transform: uppercase;
+        }
+        .slot-divider {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding-top: 28px;
+            color: rgba(200, 160, 0, 0.6);
+            font-size: 0.7em;
+            font-family: 'Share Tech Mono', monospace;
+            letter-spacing: 1px;
+        }
+        .slot-divider-line {
+            width: 1px;
+            height: 30px;
+            background: linear-gradient(to bottom, transparent, rgba(200,160,0,0.5), transparent);
+        }
+        .slot-divider-icon {
+            font-size: 1.4em;
+            animation: slotPulse 1.4s ease-in-out infinite;
+        }
+        /* Progress bar */
+        .shuffle-progress-wrap {
+            width: 100%;
+            height: 2px;
+            background: rgba(111,168,111,0.1);
+            position: relative;
+            margin-bottom: 14px;
+            overflow: hidden;
+        }
+        .shuffle-progress-bar {
+            height: 100%;
+            background: linear-gradient(to right, transparent, var(--cyan), var(--cyan));
+            width: 0%;
+            transition: width linear;
+            box-shadow: 0 0 6px var(--cyan);
+        }
+        .shuffle-status {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.78em;
+            color: rgba(111, 168, 111, 0.7);
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        .shuffle-status.locked {
+            color: var(--gold);
+            text-shadow: 0 0 6px rgba(240,173,78,0.5);
+        }
+        /* Warning stripe footer */
+        .shuffle-footer-stripe {
+            background: repeating-linear-gradient(
+                -45deg,
+                rgba(80, 60, 0, 0.7),
+                rgba(80, 60, 0, 0.7) 10px,
+                rgba(20, 15, 0, 0.7) 10px,
+                rgba(20, 15, 0, 0.7) 20px
+            );
+            border-top: 1px solid rgba(200, 160, 0, 0.2);
+            padding: 5px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .shuffle-footer-text {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.6em;
+            color: rgba(200,160,0,0.5);
+            letter-spacing: 4px;
+        }
+
+        /* Purge Tactical Warning Banner */
+        #purgeBanner {
+            position: absolute;
+            top: 25%;
+            left: 0;
+            width: 100%;
+            background: rgba(20, 5, 5, 0.95);
+            border-top: 3px solid var(--pink);
+            border-bottom: 3px solid var(--pink);
+            box-shadow: 0 0 35px rgba(255, 0, 100, 0.6);
+            z-index: 150;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px 0;
+            animation: purgeBannerIn 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+        .purge-content {
+            text-align: center;
+        }
+        .purge-title {
+            font-family: 'Black Ops One', sans-serif;
+            font-size: 2.5em;
+            color: var(--pink);
+            text-shadow: 0 0 15px rgba(255, 0, 100, 0.8);
+            letter-spacing: 4px;
+            margin-bottom: 8px;
+        }
+        .purge-subtitle {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1.2em;
+            color: #fff;
+            letter-spacing: 6px;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
+            text-transform: uppercase;
+        }
+        @keyframes purgeBannerIn {
+            0% { transform: scaleY(0); opacity: 0; }
+            100% { transform: scaleY(1); opacity: 1; }
+        }
+
+        /* ═══ RULES OVERLAY ════════════════════════════════════════════════ */
+        #rulesOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            background: rgba(8, 10, 8, 0.97);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        #rulesOverlay.hiding {
+            animation: rulesOut 0.45s cubic-bezier(0.4,0,1,1) forwards;
+        }
+        @keyframes rulesOut {
+            0%   { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(1.04); }
+        }
+        #rulesPanel {
+            position: relative;
+            width: 100%;
+            max-width: 920px;
+            background: rgba(18, 22, 18, 0.98);
+            clip-path: polygon(20px 0%, calc(100% - 20px) 0%, 100% 20px, 100% calc(100% - 20px), calc(100% - 20px) 100%, 20px 100%, 0% calc(100% - 20px), 0% 20px);
+            border: 1px solid rgba(140, 168, 133, 0.18);
+            box-shadow: 0 0 60px rgba(0,0,0,0.8), inset 0 0 80px rgba(0,0,0,0.5);
+            animation: rulesIn 0.5s cubic-bezier(0.22,1,0.36,1);
+            overflow: hidden;
+        }
+        @keyframes rulesIn {
+            0%   { opacity: 0; transform: scale(0.94) translateY(20px); }
+            100% { opacity: 1; transform: scale(1)   translateY(0); }
+        }
+        /* corner brackets */
+        #rulesPanel::before, #rulesPanel::after {
+            content: '';
+            position: absolute;
+            width: 28px; height: 28px;
+            border-color: var(--cyan);
+            border-style: solid;
+            z-index: 2;
+        }
+        #rulesPanel::before { top: 8px; left: 8px;  border-width: 2px 0 0 2px; }
+        #rulesPanel::after  { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
+        .rules-scanlines {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0.18) 4px);
+            z-index: 1;
+        }
+
+        .rules-warn-stripe {
+            height: 6px;
+            background: repeating-linear-gradient(90deg, #f0ad4e 0px, #f0ad4e 16px, #1a1a0a 16px, #1a1a0a 32px);
+            opacity: 0.7;
+        }
+
+        .rules-inner {
+            position: relative;
+            z-index: 2;
+            padding: 28px 36px 32px;
+        }
+
+        .rules-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .rules-game-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2.2em;
+            font-weight: 900;
+            letter-spacing: 10px;
+            color: var(--cyan);
+            text-shadow: 0 0 20px rgba(140,168,133,0.4);
+            margin: 16px 0 4px;
+        }
+        .rules-subtitle {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.82em;
+            color: rgba(140,168,133,0.55);
+            letter-spacing: 4px;
+            margin-bottom: 4px;
+        }
+        .rules-ref {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.7em;
+            color: rgba(255,255,255,0.2);
+            letter-spacing: 2px;
+        }
+
+        .rules-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        @media (max-width: 620px) {
+            .rules-grid { grid-template-columns: 1fr; }
+            .rules-inner { padding: 20px 20px 24px; }
+            .rules-game-title { font-size: 1.5em; letter-spacing: 6px; }
+        }
+
+        .rules-card {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(140,168,133,0.12);
+            clip-path: polygon(10px 0%, 100% 0%, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0% 100%, 0% 10px);
+            overflow: hidden;
+        }
+        .rules-card-head {
+            padding: 12px 18px 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(140,168,133,0.1);
+        }
+        .rules-card-head.mimic { background: rgba(140,168,133,0.07); }
+        .rules-card-head.hunter { background: rgba(217,83,79,0.07); }
+
+        .rules-card-name {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.95em;
+            font-weight: 700;
+            letter-spacing: 3px;
+        }
+        .rules-card-name.mimic { color: var(--cyan); }
+        .rules-card-name.hunter { color: var(--pink); }
+
+        .rules-card-badge {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65em;
+            letter-spacing: 2px;
+            padding: 3px 8px;
+            border: 1px solid;
+            clip-path: polygon(4px 0%, 100% 0%, calc(100% - 4px) 100%, 0% 100%);
+        }
+        .rules-card-badge.mimic { color: var(--cyan); border-color: rgba(140,168,133,0.35); }
+        .rules-card-badge.hunter { color: var(--pink); border-color: rgba(217,83,79,0.35); }
+
+        .rules-card-body { padding: 16px 18px; }
+
+        .rules-roles {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .rules-role {
+            flex: 1;
+            text-align: center;
+            padding: 8px 6px;
+            border: 1px solid rgba(140,168,133,0.1);
+            background: rgba(0,0,0,0.2);
+            clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%);
+        }
+        .rules-role-icon { font-size: 1.3em; display: block; margin-bottom: 3px; }
+        .rules-role-name {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.6em;
+            letter-spacing: 1px;
+            display: block;
+        }
+        .rules-role-name.mimic  { color: var(--pink); }
+        .rules-role-name.ghost  { color: var(--cyan); }
+        .rules-role-name.hunter { color: var(--pink); }
+        .rules-role-name.prop   { color: var(--cyan); }
+        .rules-role-desc {
+            font-size: 0.62em;
+            color: rgba(255,255,255,0.4);
+            display: block;
+            margin-top: 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .rules-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .rules-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 0.8em;
+            color: rgba(255,255,255,0.75);
+            line-height: 1.45;
+            letter-spacing: 0.3px;
+        }
+        .rules-list li .rl-icon {
+            flex-shrink: 0;
+            font-size: 1em;
+            margin-top: 1px;
+        }
+        .rules-list li .rl-text strong {
+            color: #fff;
+            font-weight: normal;
+            font-style: italic;
+        }
+
+        .rules-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(140,168,133,0.25), transparent);
+            margin: 6px 0 10px;
+        }
+
+        .rules-endgame-note {
+            font-size: 0.7em;
+            color: rgba(240,173,78,0.7);
+            letter-spacing: 1px;
+            text-align: center;
+            padding: 6px 12px;
+            border: 1px solid rgba(240,173,78,0.2);
+            background: rgba(240,173,78,0.04);
+            clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%);
+            margin-top: 10px;
+        }
+
+        #btnCloseRules {
+            display: block;
+            width: 100%;
+            padding: 16px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.05em;
+            font-weight: 700;
+            letter-spacing: 5px;
+            background: var(--cyan);
+            color: #0a0f0a;
+            border: none;
+            cursor: pointer;
+            clip-path: polygon(12px 0%, calc(100% - 12px) 0%, 100% 50%, calc(100% - 12px) 100%, 12px 100%, 0% 50%);
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+        }
+        #btnCloseRules:hover {
+            background: #fff;
+            box-shadow: 0 0 30px rgba(140,168,133,0.4);
+            letter-spacing: 7px;
+        }
+        .rules-footer-hint {
+            text-align: center;
+            font-size: 0.65em;
+            color: rgba(255,255,255,0.2);
+            letter-spacing: 2px;
+            margin-top: 10px;
+        }
     </style>
 
 </head>
 
 <body>
+
+    <!-- ═══ RULES OVERLAY ══════════════════════════════════════════════════ -->
+    <div id="rulesOverlay">
+        <div id="rulesPanel">
+            <div class="rules-scanlines"></div>
+            <div class="rules-warn-stripe"></div>
+            <div class="rules-inner">
+
+                <div class="rules-header" style="position:relative;">
+                    <div id="rulesLangSelector" style="position:absolute;top:28px;right:36px;font-family:'Orbitron',sans-serif;">
+                        <button id="btnRulesLang" style="background:rgba(10,10,26,0.85);border:1px solid var(--cyan);color:#fff;padding:6px 12px;cursor:pointer;font-size:0.85em;font-weight:bold;letter-spacing:1px;text-transform:uppercase;clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%);display:flex;align-items:center;gap:6px;transition:all 0.2s ease;">
+                            <span id="rlLangFlag">🇫🇷</span><span id="rlLangText">FR</span>
+                        </button>
+                        <div id="rlLangDropdown" style="display:none;position:absolute;top:36px;right:0;background:rgba(10,10,26,0.95);border:1px solid var(--cyan);width:100px;box-shadow:0 4px 15px rgba(0,255,255,0.2);clip-path:polygon(6px 0,100% 0,calc(100% - 6px) 100%,0 100%);z-index:10;">
+                            <div data-rllang="fr" style="padding:8px 12px;cursor:pointer;color:#aaa;transition:all 0.2s ease;display:flex;align-items:center;gap:8px;" onmouseover="this.style.color='var(--cyan)';this.style.background='rgba(0,255,255,0.1)';" onmouseout="this.style.color='#aaa';this.style.background='transparent';"><span>🇫🇷</span> FR</div>
+                            <div data-rllang="en" style="padding:8px 12px;cursor:pointer;color:#aaa;transition:all 0.2s ease;display:flex;align-items:center;gap:8px;" onmouseover="this.style.color='var(--cyan)';this.style.background='rgba(0,255,255,0.1)';" onmouseout="this.style.color='#aaa';this.style.background='transparent';"><span>🇬🇧</span> EN</div>
+                        </div>
+                    </div>
+                    <img src="/logo_mimic.png" alt="MIMIC OPS" style="width:80px;display:block;margin:12px auto 4px;opacity:0.95;">
+                    <div class="rules-subtitle" id="rl_subtitle">// BRIEFING DE MISSION //</div>
+                    <div class="rules-ref" id="rl_ref">RÉF-OPS-001 — CLASSIFICATION : RECRUES</div>
+                </div>
+
+                <div class="rules-grid">
+                    <!-- MIMIC MODE -->
+                    <div class="rules-card">
+                        <div class="rules-card-head mimic">
+                            <span class="rules-card-name mimic">⊕ MIMIC MODE</span>
+                            <span class="rules-card-badge mimic" id="rl_mimic_badge">CLASSIQUE</span>
+                        </div>
+                        <div class="rules-card-body">
+                            <div class="rules-roles" style="justify-content:center;">
+                                <div class="rules-role" style="max-width:180px;">
+                                    <span class="rules-role-icon">🎭</span>
+                                    <span class="rules-role-name mimic" id="rl_role_agent">AGENT</span>
+                                    <span class="rules-role-desc" id="rl_role_agent_desc">Chasseur &amp; Proie</span>
+                                </div>
+                            </div>
+                            <ul class="rules-list">
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_m1">Tous les joueurs sont mélangés aux bots dans l'arène</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_m2">Chaque joueur est à la fois <strong>chasseur</strong> et <strong>proie</strong></span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_m3">Repère les vrais joueurs sans te faire repérer toi-même</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_m4">Élimine les adversaires avant qu'ils ne t'éliminent</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_m5">Imite les bots pour rester discret — un faux mouvement te trahit</span></li>
+                            </ul>
+                            <div class="rules-divider"></div>
+                            <div class="rules-endgame-note" id="rl_m_event">⚠ ÉVÉNEMENT FINAL ALÉATOIRE EN FIN DE PARTIE</div>
+                        </div>
+                    </div>
+
+                    <!-- HUNTER MODE -->
+                    <div class="rules-card">
+                        <div class="rules-card-head hunter">
+                            <span class="rules-card-name hunter" id="rl_hunter_title">◈ HUNTER MODE</span>
+                            <span class="rules-card-badge hunter" id="rl_hunter_badge">PROP HUNT</span>
+                        </div>
+                        <div class="rules-card-body">
+                            <div class="rules-roles">
+                                <div class="rules-role">
+                                    <span class="rules-role-icon">🎯</span>
+                                    <span class="rules-role-name hunter" id="rl_role_hunter">LE CHASSEUR</span>
+                                    <span class="rules-role-desc" id="rl_role_hunter_desc">Débusque les props</span>
+                                </div>
+                                <div class="rules-role">
+                                    <span class="rules-role-icon">🪑</span>
+                                    <span class="rules-role-name prop" id="rl_role_prop">PROP</span>
+                                    <span class="rules-role-desc" id="rl_role_prop_desc">Se déguise en objet</span>
+                                </div>
+                            </div>
+                            <ul class="rules-list">
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_h1">Les <strong>Props</strong> se déguisent en objets du décor</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_h2">Le <strong>Chasseur</strong> doit les débusquer et les taguer tous</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_h3">Les Props peuvent bouger — mais bougez au bon moment !</span></li>
+                                <li><span class="rl-icon">◈</span><span class="rl-text" id="rl_h4">Le Chasseur perd de la vie si le temps passe sans trouver</span></li>
+                            </ul>
+                            <div class="rules-divider"></div>
+                            <div class="rules-endgame-note" id="rl_h_event">⚠ PHASE DE CONFINEMENT EN FIN DE PARTIE</div>
+                        </div>
+                    </div>
+                </div>
+
+                <button id="btnCloseRules" id="rl_btn">▶ LANCER LA MISSION</button>
+                <div class="rules-footer-hint" id="rl_hint">// SON ACTIVÉ AU DÉMARRAGE //</div>
+
+            </div>
+            <div class="rules-warn-stripe"></div>
+        </div>
+    </div>
+
 
     <div id="errorToast">Error Message</div>
     <div id="botFillFlash">
@@ -1049,6 +1681,7 @@
 
     <div id="hud">
         <span id="livesCount"></span>
+        <div id="classicTimer" style="margin-top: 8px; font-family: 'Share Tech Mono', monospace; font-size: 1.4em; color: var(--green); text-shadow: 0 0 10px var(--green); letter-spacing: 2px;"></div>
     </div>
 
     <div id="syncWarning" class="hidden">
@@ -1113,11 +1746,85 @@
         <div class="blind-sub" id="hunterHUD_blindSub">LES FANTÔMES SE CAMOUFLENT — PRÉPAREZ-VOUS À INTERVENIR</div>
     </div>
 
+    <!-- Tactical Mission Assignment Overlay -->
+    <div id="shuffleOverlay" class="full-overlay hidden">
+        <div class="shuffle-container">
+            <!-- Corner brackets -->
+            <div class="shuffle-corner tl"></div>
+            <div class="shuffle-corner tr"></div>
+            <div class="shuffle-corner bl"></div>
+            <div class="shuffle-corner br"></div>
+
+            <div class="shuffle-header-stripe">
+                <span class="shuffle-header-id">◈ MIMIC OPS — SYS.TACTICAL</span>
+                <span class="shuffle-header-id" id="shuffleHeaderId">REF: ——————</span>
+            </div>
+
+            <div class="shuffle-inner">
+                <h2 id="shuffleTitle" class="shuffle-title">AFFECTATION ALÉATOIRE</h2>
+                <div class="shuffle-subtitle" id="shuffleSubtitle">// RANDOMIZING MISSION PARAMETERS //</div>
+
+                <div class="slots-wrapper">
+                    <div class="slot-column">
+                        <div class="slot-label" id="slotLabelMap">◈ THÉÂTRE D'OPS ◈</div>
+                        <div class="slot-box" id="slotMapBox">
+                            <div class="slot-reel" id="slotMapReel">
+                                <div>Military Base</div>
+                                <div>Forest</div>
+                                <div>Arcade Grid</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="slot-divider">
+                        <div class="slot-divider-line"></div>
+                        <div class="slot-divider-icon">◈</div>
+                        <div class="slot-divider-line"></div>
+                    </div>
+
+                    <div class="slot-column">
+                        <div class="slot-label" id="slotLabelMode">◈ OBJECTIF FINAL ◈</div>
+                        <div class="slot-box" id="slotModeBox">
+                            <div class="slot-reel" id="slotModeReel">
+                                <div>STORM</div>
+                                <div>FREEZE</div>
+                                <div>PURGE</div>
+                                <div>TEMPETE</div>
+                                <div>GEL</div>
+                                <div>DISPARITION</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="shuffle-progress-wrap">
+                    <div class="shuffle-progress-bar" id="shuffleProgressBar"></div>
+                </div>
+                <div id="shuffleStatus" class="shuffle-status">SYNCHRONISATION EN COURS...</div>
+            </div>
+
+            <div class="shuffle-footer-stripe">
+                <span class="shuffle-footer-text" id="shuffleFooterText">CLASSIFIÉ — PROTOCOLE MIMIC OPS — NE PAS DIVULGUER</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Purge Tactical Warning Banner -->
+    <div id="purgeBanner" class="hidden">
+        <div class="purge-content">
+            <div class="purge-title" id="purgeBannerTitle">⚠️ PURGE PROTOCOL ACTIVATED ⚠️</div>
+            <div class="purge-subtitle" id="purgeBannerSubtitle">ALL BOT HOSTS TERMINATING EN-MASSE</div>
+        </div>
+    </div>
+
     <div id="hunterHUD_phaseFlash" style="position: absolute; inset: 0; pointer-events: none; opacity: 0; z-index: 90; transition: opacity 0.1s;"></div>
     <div id="hunterHUD_notifStack" style="position: absolute; top: 90px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 80;"></div>
     <div id="hunterHUD_disguiseHint" style="position: absolute; bottom: 180px; right: 16px; background: rgba(111,168,111,0.1); border: 1px solid var(--green); padding: 8px 14px; font-size: 11px; color: var(--green); letter-spacing: 2px; pointer-events: none; display: none; clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%); z-index: 500;">[ E ] SE DÉGUISER</div>
 
     <div id="uiLayer">
+        <!-- Mute Button -->
+        <button id="btnMute" title="Couper le son" style="position: absolute; top: 16px; right: 90px; z-index: 1001; background: rgba(10, 10, 26, 0.85); border: 1px solid var(--cyan); color: var(--cyan); padding: 6px 10px; cursor: pointer; font-size: 1em; font-family: 'Orbitron', sans-serif; clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); transition: all 0.2s ease; pointer-events: auto; line-height: 1;">🔊</button>
+
         <!-- Floating Language Selector -->
         <div class="lang-selector" style="position: absolute; top: 16px; right: 16px; z-index: 1000; font-family: 'Orbitron', sans-serif; pointer-events: auto;">
             <button id="btnLang" style="background: rgba(10, 10, 26, 0.85); border: 1px solid var(--cyan); color: #fff; padding: 6px 12px; cursor: pointer; font-size: 0.85em; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
@@ -1137,30 +1844,10 @@
         <div id="connectMenu" class="panel">
             <div class="panel-scanlines"></div>
 
-            <!-- Animated tactical crosshair mascot -->
-            <svg class="robot-mascot" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <!-- Outer tech ring -->
-                <circle cx="50" cy="50" r="45" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="10 5 2 5" stroke-opacity="0.5">
-                    <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite"/>
-                </circle>
-                <!-- Inner warning ring -->
-                <circle cx="50" cy="50" r="35" stroke="var(--pink)" stroke-width="1" stroke-dasharray="25 8" stroke-opacity="0.7">
-                    <animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="10s" repeatCount="indefinite"/>
-                </circle>
-                <!-- Central target brackets -->
-                <path d="M 40 30 L 30 30 L 30 40 M 60 30 L 70 30 L 70 40 M 30 60 L 30 70 L 40 70 M 70 60 L 70 70 L 60 70" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"/>
-                <!-- Center dot blinking -->
-                <circle cx="50" cy="50" r="3" fill="var(--pink)">
-                    <animate attributeName="opacity" values="0.2;1;0.2" dur="1.5s" repeatCount="indefinite"/>
-                </circle>
-                <!-- Radar sweep line -->
-                <line x1="50" y1="50" x2="50" y2="15" stroke="var(--cyan)" stroke-width="1.5" stroke-linecap="round" opacity="0.8">
-                    <animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="4s" repeatCount="indefinite"/>
-                </line>
-            </svg>
+            <img src="/logo_mimic.png" alt="MIMIC OPS" class="robot-mascot" style="object-fit:contain;">
 
 
-             <h1 class="menu-title" id="mainMenuTitle">THE MIMIC</h1>
+             <h1 class="menu-title" id="mainMenuTitle">MIMIC OPS</h1>
              <p class="menu-sub" id="mainMenuSub">// Prototype v0.1 — Find &amp; Eliminate //</p>
  
              <div class="mode-selector">
@@ -1184,6 +1871,14 @@
         <!-- ═══ LOBBY MENU ══════════════════════════════ -->
         <div id="lobbyMenu" class="panel hidden">
             <div class="panel-scanlines"></div>
+
+            <svg class="robot-mascot" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:52px;margin-bottom:6px;">
+                <circle cx="50" cy="50" r="45" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="10 5 2 5" stroke-opacity="0.5"><animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite"/></circle>
+                <circle cx="50" cy="50" r="35" stroke="var(--pink)" stroke-width="1" stroke-dasharray="25 8" stroke-opacity="0.7"><animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="10s" repeatCount="indefinite"/></circle>
+                <path d="M 40 30 L 30 30 L 30 40 M 60 30 L 70 30 L 70 40 M 30 60 L 30 70 L 40 70 M 70 60 L 70 70 L 60 70" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="50" cy="50" r="3" fill="var(--pink)"><animate attributeName="opacity" values="0.2;1;0.2" dur="1.5s" repeatCount="indefinite"/></circle>
+                <line x1="50" y1="50" x2="50" y2="15" stroke="var(--cyan)" stroke-width="1.5" stroke-linecap="round" opacity="0.8"><animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="4s" repeatCount="indefinite"/></line>
+            </svg>
 
             <h1 class="menu-title" id="lobbyMenuTitle" style="font-size:1.8em;letter-spacing:6px">ROOM READY</h1>
 
@@ -1212,8 +1907,8 @@
                 </div>
 
                 <div id="hostSettings" style="grid-column: span 2;">
-                    <label id="lblArena">Arena</label>
-                    <select id="themeSelect" style="margin-bottom:10px">
+                    <label id="lblArena" style="display:none"></label>
+                    <select id="themeSelect" style="display:none">
                         <option value="Military Base">🏭 INDUSTRIAL SECTOR — Sync Events</option>
                         <option value="Weapon Warehouse">⛓️ WEAPON WAREHOUSE — Alarm Lockdown</option>
                         <option value="Command Center">📡 COMMAND CENTER — Radar Sweep</option>
@@ -1228,7 +1923,7 @@
                 </div>
             </div>
 
-            <p id="lobbyStatus">WAITING... [1/4]</p>
+            <p id="lobbyStatus">WAITING... [1/6]</p>
 
             <!-- Countdown section (hidden until READY is clicked) -->
             <div class="countdown-wrap" id="countdownWrap">
@@ -1263,6 +1958,13 @@
         <div id="gameOverMenu" class="panel hidden">
             <div class="panel-scanlines"></div>
 
+            <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:52px;margin-bottom:6px;display:block;margin-left:auto;margin-right:auto;">
+                <circle cx="50" cy="50" r="45" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="10 5 2 5" stroke-opacity="0.5"><animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="20s" repeatCount="indefinite"/></circle>
+                <circle cx="50" cy="50" r="35" stroke="var(--pink)" stroke-width="1" stroke-dasharray="25 8" stroke-opacity="0.7"><animateTransform attributeName="transform" type="rotate" from="360 50 50" to="0 50 50" dur="10s" repeatCount="indefinite"/></circle>
+                <path d="M 40 30 L 30 30 L 30 40 M 60 30 L 70 30 L 70 40 M 30 60 L 30 70 L 40 70 M 70 60 L 70 70 L 60 70" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round"/>
+                <circle cx="50" cy="50" r="3" fill="var(--pink)"><animate attributeName="opacity" values="0.2;1;0.2" dur="1.5s" repeatCount="indefinite"/></circle>
+                <line x1="50" y1="50" x2="50" y2="15" stroke="var(--cyan)" stroke-width="1.5" stroke-linecap="round" opacity="0.8"><animateTransform attributeName="transform" type="rotate" from="0 50 50" to="360 50 50" dur="4s" repeatCount="indefinite"/></line>
+            </svg>
             <p class="menu-sub" id="lblMatchEnded" style="margin-top:0">── MATCH ENDED ──</p>
             <h1 id="winnerText">GAME OVER</h1>
             <p class="gameover-sub" id="lblSystemShutdown">System shutting down...</p>
@@ -1372,6 +2074,11 @@
         let alivePlayersCount = 0;
         let totalPlayersCount = 0;
         let tagEffects = []; // Visual clicks {x,y,time}
+        let classicEndGameMode = 'STORM';
+        let classicEndGameTriggered = false;
+        let classicEndGameCountdownRemaining = 30000;
+        let classicStormRadius = 2500;
+        let clientLastTime = performance.now();
         let hitFeedbackEffects = []; // Hunter hit feedback {x,y,time,type}
         let deathParticles = []; // Death burst particles {x,y,vx,vy,life,decay,size,col}
         let shakePow = 0; // Current screen shake magnitude
@@ -1438,7 +2145,7 @@
                 btnJoinRandom: "⚡ Partie Rapide",
                 btnReady: "▶ PRÊT",
                 btnStartNow: "⚡ DÉMARRER MAINTENANT",
-                mainMenuTitleMimic: "THE MIMIC",
+                mainMenuTitleMimic: "MIMIC OPS",
                 mainMenuSubMimic: "// Prototype v0.1 — Trouver & Éliminer //",
                 mainMenuTitleHunter: "PROP HUNT",
                 mainMenuSubHunter: "// Opération Hunter — Traquer & Taguer //",
@@ -1479,7 +2186,7 @@
                 btnJoinRandom: "⚡ Quick Match",
                 btnReady: "▶ READY",
                 btnStartNow: "⚡ START NOW",
-                mainMenuTitleMimic: "THE MIMIC",
+                mainMenuTitleMimic: "MIMIC OPS",
                 mainMenuSubMimic: "// Prototype v0.1 — Find & Eliminate //",
                 mainMenuTitleHunter: "PROP HUNT",
                 mainMenuSubHunter: "// Hunter Operation — Search & Tag //",
@@ -1639,6 +2346,9 @@
                 `;
                 document.getElementById('btnSoloTest').style.display = 'inline-block';
                 document.getElementById('btnHunterMode').style.display = 'none';
+                if (isHost) {
+                    document.getElementById('btnStartNow').style.display = 'inline-block';
+                }
             }
             if (currentVal) select.value = currentVal;
         }
@@ -1646,7 +2356,19 @@
         // Language Selector dropdown toggle and close on click outside
         const btnLang = document.getElementById('btnLang');
         const langDropdown = document.getElementById('langDropdown');
-        
+
+        // ── Mute toggle ────────────────────────────────────────────────────
+        const btnMute = document.getElementById('btnMute');
+        function toggleMute() {
+            isMuted = !isMuted;
+            if (masterGain) masterGain.gain.value = isMuted ? 0 : 1;
+            btnMute.textContent = isMuted ? '🔇' : '🔊';
+            btnMute.title = isMuted
+                ? (currentLang === 'en' ? 'Unmute' : 'Activer le son')
+                : (currentLang === 'en' ? 'Mute'   : 'Couper le son');
+        }
+        btnMute.addEventListener('click', () => toggleMute());
+
         btnLang.addEventListener('click', (e) => {
             e.stopPropagation();
             const isHidden = langDropdown.style.display === 'none' || langDropdown.style.display === '';
@@ -1726,13 +2448,18 @@
         let audioCtx = null;
         let musicNodes = {}; // for background music oscillators
         let musicGain = null;
+        let masterGain = null;
+        let isMuted = false;
 
         function ensureAudioCtx() {
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                masterGain = audioCtx.createGain();
+                masterGain.gain.value = isMuted ? 0 : 1;
+                masterGain.connect(audioCtx.destination);
                 musicGain = audioCtx.createGain();
                 musicGain.gain.value = 0.15;
-                musicGain.connect(audioCtx.destination);
+                musicGain.connect(masterGain);
             }
             if (audioCtx.state === 'suspended') audioCtx.resume();
         }
@@ -1740,17 +2467,22 @@
         // ----- SFX helpers -----
 
         function sfxBeep(freq, duration, type = 'square', vol = 0.25) {
-            ensureAudioCtx();
-            const osc = audioCtx.createOscillator();
-            const g = audioCtx.createGain();
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-            g.gain.setValueAtTime(vol, audioCtx.currentTime);
-            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-            osc.connect(g);
-            g.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + duration);
+            try {
+                ensureAudioCtx();
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+                g.gain.setValueAtTime(vol, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                osc.connect(g);
+                g.connect(masterGain);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch (e) {
+                console.warn('[sfxBeep] Audio Context error:', e);
+            }
         }
 
         function sfxPickupHeart() {
@@ -1772,7 +2504,7 @@
             g.gain.setValueAtTime(0.3, audioCtx.currentTime);
             g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
             osc.connect(g);
-            g.connect(audioCtx.destination);
+            g.connect(masterGain);
             osc.start();
             osc.stop(audioCtx.currentTime + 0.4);
         }
@@ -1788,7 +2520,7 @@
             const g = audioCtx.createGain();
             g.gain.value = 0.5;
             src.connect(g);
-            g.connect(audioCtx.destination);
+            g.connect(masterGain);
             src.start();
         }
 
@@ -1873,7 +2605,7 @@
                     kg.gain.setValueAtTime(0.35, audioCtx.currentTime);
                     kg.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
                     kick.connect(kg);
-                    kg.connect(audioCtx.destination);
+                    kg.connect(masterGain);
                     kick.start();
                     kick.stop(audioCtx.currentTime + 0.15);
                 }
@@ -1886,6 +2618,136 @@
                 try { musicNodes[key].stop ? musicNodes[key].stop() : musicNodes[key].disconnect(); } catch(e) {}
             }
             musicNodes = {};
+        }
+
+        // ── MENU MUSIC (epic war theme) ───────────────────────────────────
+        let menuMusicInterval = null;
+        let menuMusicNodes = {};
+        let menuMusicStarted = false;
+
+        function startMenuMusic() {
+            ensureAudioCtx();
+            stopMenuMusic();
+
+            // Bass drones — A1, thick layered
+            [[55, 0.05], [55.35, 0.03], [110, 0.022]].forEach(([freq, vol], i) => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.value = freq;
+                g.gain.value = vol;
+                osc.connect(g);
+                g.connect(masterGain);
+                osc.start();
+                menuMusicNodes[`d${i}`] = osc;
+            });
+
+            // Sustained Am pad (A2–E4, detuned pairs for width)
+            [110, 130.81, 164.81, 220, 261.63].forEach((freq, i) => {
+                const osc = audioCtx.createOscillator();
+                const filt = audioCtx.createBiquadFilter();
+                const g = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.value = freq + (i % 2 === 0 ? 0.45 : -0.45);
+                filt.type = 'lowpass';
+                filt.frequency.value = 850;
+                g.gain.value = 0.017;
+                osc.connect(filt); filt.connect(g); g.connect(masterGain);
+                osc.start();
+                menuMusicNodes[`p${i}`] = osc;
+            });
+
+            // Sequencer — 16th notes at 80 BPM
+            const STEP_MS = (60 / 80 / 4) * 1000; // 187.5 ms
+
+            // Chord cycle: Am → G → F → Em (8 steps each)
+            const CHORDS = [
+                [220, 261.63, 329.63],
+                [196,  246.94, 293.66],
+                [174.61, 220, 261.63],
+                [164.81, 207.65, 246.94],
+            ];
+
+            //                   1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16
+            const KICK_PAT   = [1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0];
+            const SNARE_PAT  = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
+            const HAT_PAT    = [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0];
+            const BRASS_PAT  = [1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+
+            let menuStep = 0;
+            menuMusicInterval = setInterval(() => {
+                if (!audioCtx) return;
+                const now = audioCtx.currentTime;
+                const s = menuStep % 16;
+                const chordIdx = Math.floor((menuStep % 32) / 8);
+
+                // Timpani kick
+                if (KICK_PAT[s]) {
+                    const k = audioCtx.createOscillator(), kg = audioCtx.createGain();
+                    k.type = 'sine';
+                    k.frequency.setValueAtTime(100, now);
+                    k.frequency.exponentialRampToValueAtTime(26, now + 0.22);
+                    kg.gain.setValueAtTime(0.58, now);
+                    kg.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+                    k.connect(kg); kg.connect(masterGain);
+                    k.start(now); k.stop(now + 0.35);
+                }
+
+                // Military snare
+                if (SNARE_PAT[s]) {
+                    const bLen = Math.floor(audioCtx.sampleRate * 0.17);
+                    const buf = audioCtx.createBuffer(1, bLen, audioCtx.sampleRate);
+                    const d = buf.getChannelData(0);
+                    for (let i = 0; i < bLen; i++) d[i] = Math.random() * 2 - 1;
+                    const src = audioCtx.createBufferSource(); src.buffer = buf;
+                    const sg = audioCtx.createGain();
+                    sg.gain.setValueAtTime(0.28, now);
+                    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+                    src.connect(sg); sg.connect(masterGain); src.start(now);
+                }
+
+                // Hi-hat (subtle)
+                if (HAT_PAT[s]) {
+                    const bLen = Math.floor(audioCtx.sampleRate * 0.028);
+                    const buf = audioCtx.createBuffer(1, bLen, audioCtx.sampleRate);
+                    const d = buf.getChannelData(0);
+                    for (let i = 0; i < bLen; i++) d[i] = Math.random() * 2 - 1;
+                    const src = audioCtx.createBufferSource(); src.buffer = buf;
+                    const hf = audioCtx.createBiquadFilter();
+                    hf.type = 'highpass'; hf.frequency.value = 7000;
+                    const hg = audioCtx.createGain();
+                    hg.gain.setValueAtTime(0.065, now);
+                    hg.gain.exponentialRampToValueAtTime(0.001, now + 0.028);
+                    src.connect(hf); hf.connect(hg); hg.connect(masterGain); src.start(now);
+                }
+
+                // Brass chord stab
+                if (BRASS_PAT[s]) {
+                    CHORDS[chordIdx].forEach(freq => {
+                        const o = audioCtx.createOscillator();
+                        const filt = audioCtx.createBiquadFilter();
+                        const g = audioCtx.createGain();
+                        o.type = 'sawtooth';
+                        o.frequency.value = freq * 2;
+                        filt.type = 'lowpass'; filt.frequency.value = 1800; filt.Q.value = 0.7;
+                        g.gain.setValueAtTime(0.095, now);
+                        g.gain.setValueAtTime(0.055, now + 0.06);
+                        g.gain.exponentialRampToValueAtTime(0.001, now + STEP_MS * 6 / 1000);
+                        o.connect(filt); filt.connect(g); g.connect(masterGain);
+                        o.start(now); o.stop(now + STEP_MS * 7 / 1000);
+                    });
+                }
+
+                menuStep++;
+            }, STEP_MS);
+        }
+
+        function stopMenuMusic() {
+            if (menuMusicInterval) { clearInterval(menuMusicInterval); menuMusicInterval = null; }
+            for (const key of Object.keys(menuMusicNodes)) {
+                try { menuMusicNodes[key].stop ? menuMusicNodes[key].stop() : menuMusicNodes[key].disconnect(); } catch(e) {}
+            }
+            menuMusicNodes = {};
         }
 
         // ── Screen shake (CSS transform on canvas — zero draw-call cost) ──
@@ -1985,7 +2847,7 @@
                 env.gain.setValueAtTime(vol, audioCtx.currentTime + holdSec * 0.6);
                 env.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + holdSec + 0.15);
                 osc.connect(env);
-                env.connect(audioCtx.destination);
+                env.connect(masterGain);
                 osc.start();
                 osc.stop(audioCtx.currentTime + holdSec + 0.2);
             }, LOBBY_STEP_MS);
@@ -1999,6 +2861,13 @@
 
         socket.on('connect', () => {
             localPlayerId = socket.id;
+
+            // Attempt session rejoin first
+            const rejoinToken = sessionStorage.getItem('mimic_token');
+            if (rejoinToken) {
+                socket.emit('rejoinRoom', { token: rejoinToken });
+                return; // wait for rejoinSuccess or rejoinFailed before doing anything else
+            }
 
             // Auto-join from shared URL (?code=XXXX or ?hunter=XXXX)
             const urlParams = new URLSearchParams(window.location.search);
@@ -2030,6 +2899,78 @@
         if (socket && socket.id) {
             localPlayerId = socket.id;
         }
+
+        // ── Session token persistence ────────────────────────
+        socket.on('sessionToken', ({ token, roomCode, isHunter }) => {
+            sessionStorage.setItem('mimic_token', token);
+            sessionStorage.setItem('mimic_room', roomCode);
+            sessionStorage.setItem('mimic_isHunter', isHunter ? '1' : '0');
+        });
+
+        socket.on('rejoinFailed', () => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+        });
+
+        socket.on('rejoinSuccess', (data) => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+            localPlayerId = socket.id;
+
+            if (data.mode === 'hunter') {
+                roomType = 'hunter';
+                myRole = data.role;
+                G.phase = data.phase;
+                G.mapSize = data.mapSize;
+                G.theme = data.theme;
+                G.hunterHealth = data.hunterHealth;
+                hunterId = data.hunterId;
+                lobbyMenu.classList.add('hidden');
+                const hHUD = document.getElementById('hunterHUD');
+                if (hHUD) hHUD.classList.remove('hidden');
+                const notif = (currentLang === 'en') ? 'Reconnected!' : 'Reconnecté !';
+                showNotif(notif, 'success');
+            } else {
+                // mimic mode
+                theme = data.theme;
+                mapRule = data.mapRule || 'sync';
+                MAP_SIZE = data.mapSize;
+                decorations = data.decorations || [];
+                initEnvironment();
+                lobbyMenu.classList.add('hidden');
+                hud.style.display = 'block';
+                minimapEl.style.display = 'block';
+                playerCounterEl.style.display = 'block';
+                const notif = (currentLang === 'en') ? 'Reconnected!' : 'Reconnecté !';
+                showNotif(notif, 'success');
+            }
+        });
+
+        socket.on('hostMigrated', ({ newHostId }) => {
+            if (newHostId === localPlayerId) {
+                isHost = true;
+                const msg = (currentLang === 'en') ? 'You are now the host' : "Vous êtes maintenant l'hôte";
+                showNotif(msg, 'info');
+                // Show host controls if in lobby
+                const btnStartNow = document.getElementById('btnStartNow');
+                if (btnStartNow) btnStartNow.style.display = 'inline-block';
+                btnTogglePublic.style.display = '';
+            }
+        });
+
+        socket.on('playerDisconnected', ({ socketId, graceSecs }) => {
+            const msg = (currentLang === 'en')
+                ? `A player disconnected — ${graceSecs}s to reconnect`
+                : `Un joueur s'est déconnecté — ${graceSecs}s pour revenir`;
+            showNotif(msg, 'warn');
+        });
+
+        socket.on('playerRejoined', ({ socketId }) => {
+            const msg = (currentLang === 'en') ? 'A player reconnected!' : 'Un joueur a reconnecté !';
+            showNotif(msg, 'success');
+        });
 
         // Game Mode Selection on First Page
         selectedMode = 'mimic';
@@ -2113,6 +3054,7 @@
             document.getElementById('hostSettings').style.display = 'block';
             updateShareWidget(data.code, 'hunter');
             shareWidget.style.display = 'flex';
+            stopMenuMusic();
             startLobbyMusic();
         });
 
@@ -2125,6 +3067,7 @@
             updateLobbyThemeOptions();
             document.getElementById('hostSettings').style.display = 'none';
             shareWidget.style.display = 'none';
+            stopMenuMusic();
             startLobbyMusic();
         });
 
@@ -2137,6 +3080,7 @@
             document.getElementById('hostSettings').style.display = 'block';
             updateShareWidget(code, 'mimic');
             shareWidget.style.display = 'flex';
+            stopMenuMusic();
             startLobbyMusic();
         });
 
@@ -2149,6 +3093,7 @@
             // Guest doesn't pick theme or public status
             document.getElementById('hostSettings').style.display = 'none';
             shareWidget.style.display = 'none';
+            stopMenuMusic();
             startLobbyMusic();
         });
 
@@ -2211,8 +3156,8 @@
             }
 
             lobbyStatus.textContent = (currentLang === 'en')
-                ? `Players: [${status.playerCount}/4] | Ready: [${status.readyCount}/${status.playerCount}]`
-                : `Joueurs : [${status.playerCount}/4] | Prêt(s) : [${status.readyCount}/${status.playerCount}]`;
+                ? `Players: [${status.playerCount}/6] | Ready: [${status.readyCount}/${status.playerCount}]`
+                : `Joueurs : [${status.playerCount}/6] | Prêt(s) : [${status.readyCount}/${status.playerCount}]`;
 
             if (status.gameMode === 'hunter') {
                 roomType = 'hunter';
@@ -2478,7 +3423,34 @@
             const s    = sec % 60;
             const timerEl = document.getElementById('hunterHUD_timerDisplay');
             if (timerEl) {
-                const timeStr = String(min).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+                let timeStr = String(min).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+                if (G.phase === 'HUNT') {
+                    const endgameSec = Math.ceil((G.endGameCountdownRemaining || 0) / 1000);
+                    if (G.endGameTriggered) {
+                        if (G.endGameMode === 'STORM') {
+                            timeStr = (currentLang === 'en') ? 'STORM ACTIVE!' : 'TEMPÊTE ACTIVE !';
+                        } else if (G.endGameMode === 'FREEZE') {
+                            timeStr = (currentLang === 'en') ? 'BOTS FROZEN!' : 'BOTS FIGÉS !';
+                        } else if (G.endGameMode === 'PURGE') {
+                            timeStr = (currentLang === 'en') ? 'PURGE ACTIVE!' : 'PURGE ACTIVE !';
+                        }
+                    } else if (endgameSec > 0) {
+                        if (G.endGameMode === 'STORM') {
+                            timeStr = ((currentLang === 'en') ? 'STORM IN: ' : 'ZONE DANS : ') + endgameSec + 's';
+                        } else if (G.endGameMode === 'FREEZE') {
+                            timeStr = ((currentLang === 'en') ? 'FREEZE IN: ' : 'GEL DANS : ') + endgameSec + 's';
+                        } else if (G.endGameMode === 'PURGE') {
+                            timeStr = ((currentLang === 'en') ? 'PURGE IN: ' : 'PURGE DANS : ') + endgameSec + 's';
+                        }
+                    }
+                }
+                
+                if (timeStr.length > 5) {
+                    timerEl.style.fontSize = '18px';
+                } else {
+                    timerEl.style.fontSize = '32px';
+                }
+                
                 timerEl.textContent = timeStr;
                 timerEl.className = 'hud-timer' + (remaining < 30000 && G.phase === 'HUNT' ? ' urgent' : '');
                 console.log('[HunterHUD Timer]', 'remaining:', remaining, 'timeStr:', timeStr, 'phaseEndsAt:', G.phaseEndsAt, 'now:', Date.now());
@@ -2497,8 +3469,191 @@
             }
         }
 
+        function runShuffleAnimation(data, mapList) {
+            const overlay    = document.getElementById('shuffleOverlay');
+            if (!overlay) return;
+            overlay.classList.remove('hidden');
+
+            const mapReel    = document.getElementById('slotMapReel');
+            const modeReel   = document.getElementById('slotModeReel');
+            const statusText = document.getElementById('shuffleStatus');
+            const progressBar= document.getElementById('shuffleProgressBar');
+            const headerId   = document.getElementById('shuffleHeaderId');
+            const isFr       = (currentLang !== 'en');
+
+            // Set all UI text based on current language
+            const titleEl    = document.getElementById('shuffleTitle');
+            const subtitleEl = document.getElementById('shuffleSubtitle');
+            const labelMapEl = document.getElementById('slotLabelMap');
+            const labelModeEl= document.getElementById('slotLabelMode');
+            const footerEl   = document.getElementById('shuffleFooterText');
+            if (titleEl)     titleEl.textContent    = isFr ? 'AFFECTATION ALÉATOIRE' : 'RANDOM ASSIGNMENT';
+            if (subtitleEl)  subtitleEl.textContent = isFr ? '// PARAMÈTRES DE MISSION EN COURS //' : '// RANDOMIZING MISSION PARAMETERS //';
+            if (labelMapEl)  labelMapEl.textContent  = isFr ? '◈ THÉÂTRE D\'OPS ◈' : '◈ THEATRE OF OPS ◈';
+            if (labelModeEl) labelModeEl.textContent = isFr ? '◈ OBJECTIF FINAL ◈' : '◈ FINAL OBJECTIVE ◈';
+            if (footerEl)    footerEl.textContent    = isFr
+                ? 'CLASSIFIÉ — PROTOCOLE MIMIC OPS — NE PAS DIVULGUER'
+                : 'CLASSIFIED — MIMIC OPS PROTOCOL — DO NOT DISCLOSE';
+
+            // Generate a random mission ref ID
+            const refId = 'REF: ' + Math.random().toString(36).slice(2,6).toUpperCase() + '-' + Math.random().toString(36).slice(2,6).toUpperCase();
+            if (headerId) headerId.textContent = refId;
+
+            const maps  = mapList || ['Military Base', 'Forest', 'Arcade Grid'];
+            const modes = ['STORM', 'FREEZE', 'PURGE', 'TEMPETE', 'GEL', 'DISPARITION'];
+
+            mapReel.innerHTML  = '';
+            modeReel.innerHTML = '';
+
+            const repeats = 24;
+            for (let i = 0; i < repeats; i++) {
+                const mapDiv = document.createElement('div');
+                mapDiv.textContent = maps[i % maps.length];
+                mapReel.appendChild(mapDiv);
+
+                const modeDiv = document.createElement('div');
+                modeDiv.textContent = modes[i % modes.length];
+                modeReel.appendChild(modeDiv);
+            }
+
+            // Place target items near the end
+            const targetMapIndex  = repeats - 2;
+            const targetModeIndex = repeats - 1;
+            mapReel.children[targetMapIndex].textContent  = data.map;
+            modeReel.children[targetModeIndex].textContent = data.mode;
+
+            // Reset reels
+            mapReel.style.transition  = 'none';
+            modeReel.style.transition = 'none';
+            mapReel.style.transform   = 'translateY(0)';
+            modeReel.style.transform  = 'translateY(0)';
+            if (progressBar) { progressBar.style.transition = 'none'; progressBar.style.width = '0%'; }
+            if (statusText)  { statusText.textContent = isFr ? 'SYNCHRONISATION EN COURS...' : 'RANDOMIZING...'; statusText.className = 'shuffle-status'; }
+
+            mapReel.offsetHeight; // force reflow
+
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    const duration = data.duration || 3500;
+                    const ITEM_H   = 88;
+
+                    mapReel.style.transition  = `transform ${duration - 500}ms cubic-bezier(0.05, 0.9, 0.1, 1.0)`;
+                    modeReel.style.transition = `transform ${duration}ms cubic-bezier(0.05, 0.9, 0.1, 1.0)`;
+                    mapReel.style.transform   = `translateY(${-targetMapIndex  * ITEM_H}px)`;
+                    modeReel.style.transform  = `translateY(${-targetModeIndex * ITEM_H}px)`;
+
+                    // Progress bar
+                    if (progressBar) {
+                        progressBar.style.transition = `width ${duration}ms linear`;
+                        progressBar.style.width = '100%';
+                    }
+                });
+            });
+
+            // Tick sounds
+            const totalTicks = 14;
+            let tickCount = 0;
+            const tickInterval = setInterval(() => {
+                tickCount++;
+                if (tickCount >= totalTicks) { clearInterval(tickInterval); return; }
+                const freq = 260 + tickCount * 30;
+                sfxBeep(freq, 0.03, 'square', 0.08);
+            }, (data.duration || 3500) / totalTicks);
+
+            // Lock-in sound + status update
+            setTimeout(() => {
+                sfxBeep(440, 0.06, 'sine', 0.15);
+                setTimeout(() => sfxBeep(660, 0.1, 'sine', 0.2), 120);
+                setTimeout(() => sfxBeep(880, 0.14, 'sine', 0.25), 240);
+                if (statusText) {
+                    const lockedLabel = isFr ? 'VERROUILLÉ' : 'LOCKED';
+                    statusText.textContent = `◈ ${lockedLabel} — ${data.map.toUpperCase()} / ${data.mode} ◈`;
+                    statusText.className = 'shuffle-status locked';
+                }
+                // Flash selected items green
+                const mapTarget  = mapReel.children[targetMapIndex];
+                const modeTarget = modeReel.children[targetModeIndex];
+                if (mapTarget)  mapTarget.style.color  = 'var(--gold)';
+                if (modeTarget) modeTarget.style.color = 'var(--gold)';
+            }, (data.duration || 3500) - 300);
+
+            setTimeout(() => { overlay.classList.add('hidden'); }, (data.duration || 3500) + 900);
+        }
+
+        socket.on('hunterRoomShuffle', (data) => {
+            runShuffleAnimation(data, ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique']);
+        });
+
+        socket.on('roomShuffle', (data) => {
+            runShuffleAnimation(data, data.maps || ['Military Base', 'Forest', 'Arcade Grid', 'Weapon Warehouse', 'Cave', 'Toy Factory', 'Command Center', 'Desert', 'Micro-Circuit']);
+        });
+
+        socket.on('classicEndGameModeTriggered', (data) => {
+            const banner = document.getElementById('purgeBanner');
+            if (banner) {
+                const title = document.getElementById('purgeBannerTitle');
+                const subtitle = document.getElementById('purgeBannerSubtitle');
+
+                if (data.mode === 'STORM') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ STORM ZONE CLOSING ⚠️' : '⚠️ RÉTRÉCISSEMENT DE LA ZONE ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SECURE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
+                } else if (data.mode === 'FREEZE') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️' : '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' : 'TOUS LES BOTS DECOYS SONT FIGÉS';
+                } else if (data.mode === 'PURGE') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ BOT PURGE PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE PURGE DES BOTS ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'TERMINATING BOT HOSTS EVERY 5 SECONDS' : 'ÉLIMINATION DES BOTS TOUTES LES 5 SECONDES';
+                } else if (data.mode === 'TEMPETE') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ TEMPEST ZONE CLOSING ⚠️' : '⚠️ TEMPÊTE — ZONE EN FERMETURE ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SAFE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
+                } else if (data.mode === 'GEL') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ CRYO-GEL ACTIVATED ⚠️' : '⚠️ CRYO-GEL ACTIVÉ ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOTS ARE FROZEN — FIND THE PLAYERS!' : 'TOUS LES BOTS SONT FIGÉS — TROUVEZ LES JOUEURS !';
+                } else if (data.mode === 'DISPARITION') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ VANISHING PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE DISPARITION ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'BOTS VANISHING EVERY 5 SECONDS' : 'LES BOTS DISPARAISSENT TOUTES LES 5 SECONDES';
+                }
+
+                banner.classList.remove('hidden');
+                sfxBeep(220, 0.2, 'sawtooth', 0.35);
+                setTimeout(() => sfxBeep(180, 0.4, 'sawtooth', 0.35), 250);
+                
+                setTimeout(() => {
+                    banner.classList.add('hidden');
+                }, 4000);
+            }
+        });
+
+        socket.on('hunterEndGameModeTriggered', (data) => {
+            const banner = document.getElementById('purgeBanner');
+            if (banner) {
+                const title = document.getElementById('purgeBannerTitle');
+                const subtitle = document.getElementById('purgeBannerSubtitle');
+                
+                if (data.mode === 'STORM') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ STORM ZONE CLOSING ⚠️' : '⚠️ RÉTRÉCISSEMENT DE LA ZONE ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SECURE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
+                } else if (data.mode === 'FREEZE') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️' : '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' : 'TOUS LES BOTS SPECTRES SONT FIGÉS';
+                } else if (data.mode === 'PURGE') {
+                    title.textContent = (currentLang === 'en') ? '⚠️ BOT PURGE PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE PURGE DES BOTS ⚠️';
+                    subtitle.textContent = (currentLang === 'en') ? 'TERMINATING BOT HOSTS EVERY 5 SECONDS' : 'ÉLIMINATION DES BOTS TOUTES LES 5 SECONDES';
+                }
+                
+                banner.classList.remove('hidden');
+                sfxBeep(220, 0.2, 'sawtooth', 0.35);
+                setTimeout(() => sfxBeep(180, 0.4, 'sawtooth', 0.35), 250);
+                
+                setTimeout(() => {
+                    banner.classList.add('hidden');
+                }, 4000);
+            }
+        });
+
         socket.on('hunterGameStart', (data) => {
             localPlayerId = socket.id;
+            roomType = 'hunter';
             console.log('[hunterGameStart] Received data:', {
                 phase: data.phase,
                 remaining: data.remaining,
@@ -2510,6 +3665,9 @@
             tagEffects = [];
             deathParticles = [];
             stopLobbyMusic();
+
+            document.getElementById('shuffleOverlay')?.classList.add('hidden');
+            document.getElementById('purgeBanner')?.classList.add('hidden');
 
             lobbyMenu.classList.add('hidden');
             document.getElementById('hunterHUD').classList.remove('hidden');
@@ -2593,6 +3751,10 @@
             G.doors        = data.doors || [];
             G.smokes       = data.smokes || [];
             G.droneZone    = data.droneZone || null;
+            G.endGameMode  = data.endGameMode;
+            G.endGameTriggered = data.endGameTriggered;
+            G.endGameCountdownRemaining = data.endGameCountdownRemaining;
+            G.stormRadius  = data.stormRadius;
 
             updateHealthHUD();
             updateProximityHint();
@@ -2812,12 +3974,12 @@
 
                 // Message
                 if (isUrgent) {
-                    countdownMsg.textContent = (currentLang === 'en') ? 'FILLING WITH AI IN ' + seconds : 'DÉMARRAGE DE L\'IA DANS ' + seconds;
+                    countdownMsg.textContent = (currentLang === 'en') ? 'LAUNCHING IN ' + seconds + 's' : 'LANCEMENT DANS ' + seconds + 's';
                     countdownMsg.classList.add('urgent');
                 } else {
                     countdownMsg.textContent = (currentLang === 'en')
-                        ? `${readyCount}/${playerCount} READY — FILLING AI IN ${seconds}`
-                        : `${readyCount}/${playerCount} PRÊT(S) — DÉMARRAGE DE L\'IA DANS ${seconds}`;
+                        ? `${readyCount}/${playerCount} READY — LAUNCHING IN ${seconds}s`
+                        : `${readyCount}/${playerCount} PRÊT(S) — LANCEMENT DANS ${seconds}s`;
                     countdownMsg.classList.remove('urgent');
                 }
             }
@@ -2826,14 +3988,12 @@
             slotRow.innerHTML = '';
             slots.forEach((slot, i) => {
                 const div = document.createElement('div');
-                if (slot.type === 'empty') {
-                    if (data.isQuickMatch) {
-                        div.className = 'slot bot';
-                        div.innerHTML = `<span class="slot-icon">🤖</span><span>AI</span>`;
-                    } else {
-                        div.className = 'slot human';
-                        div.innerHTML = `<span class="slot-icon">○</span><span>OPEN</span>`;
-                    }
+                if (slot.type === 'searching') {
+                    div.className = 'slot searching';
+                    div.innerHTML = `<span class="slot-icon">◌</span><span>···</span>`;
+                } else if (slot.type === 'empty') {
+                    div.className = 'slot human';
+                    div.innerHTML = `<span class="slot-icon">○</span><span>${currentLang === 'en' ? 'OPEN' : 'LIBRE'}</span>`;
                 } else if (slot.ready) {
                     div.className = 'slot human-ready';
                     div.innerHTML = `<span class="slot-icon">▶</span><span>P${slot.num}</span>`;
@@ -2883,6 +4043,7 @@
         socket.on('gameStart', (data) => {
             localPlayerId = socket.id;
             localIsReady = false;
+            roomType = 'mimic';
             lobbyMenu.classList.add('hidden');
             hud.style.display = 'block';
             minimapEl.style.display = 'block';
@@ -2893,6 +4054,14 @@
             hitFeedbackEffects = [];
             tagEffects = [];
             deathParticles = [];
+            
+            classicEndGameMode = 'STORM';
+            classicEndGameTriggered = false;
+            classicEndGameCountdownRemaining = 30000;
+            classicStormRadius = 2500;
+            clientLastTime = performance.now();
+            document.getElementById('shuffleOverlay')?.classList.add('hidden');
+            document.getElementById('purgeBanner')?.classList.add('hidden');
             
             theme = data.theme;
             mapRule = data.mapRule || 'sync';
@@ -2948,6 +4117,12 @@
                 alivePlayersCount = alive;
                 totalPlayersCount = total;
                 aliveCountEl.textContent = `${alive}/${total} joueurs`;
+            }
+            if (state.egm !== undefined) {
+                classicEndGameMode = state.egm;
+                classicEndGameTriggered = state.egt;
+                classicEndGameCountdownRemaining = state.egc;
+                classicStormRadius = state.sr;
             }
         });
 
@@ -3027,18 +4202,34 @@
         });
 
         document.getElementById('btnPlayAgain').addEventListener('click', () => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+            localIsReady = false;
             socket.emit('backToLobby');
         });
 
         document.getElementById('btnReturnToConnect').addEventListener('click', () => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+            sessionStorage.setItem('mimic_came_from_room', '1');
             window.location.reload();
         });
 
         document.getElementById('btnLobbyLeave').addEventListener('click', () => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+            sessionStorage.setItem('mimic_came_from_room', '1');
             window.location.reload();
         });
 
         document.getElementById('btnLeaveSpectate').addEventListener('click', () => {
+            sessionStorage.removeItem('mimic_token');
+            sessionStorage.removeItem('mimic_room');
+            sessionStorage.removeItem('mimic_isHunter');
+            sessionStorage.setItem('mimic_came_from_room', '1');
             window.location.reload();
         });
 
@@ -3731,11 +4922,12 @@
                         ctx.moveTo(0, s*0.5);
                         ctx.lineTo(0, s*1.8);
                         ctx.stroke();
+                        
+                        ctx.fillStyle = color;
+                        ctx.beginPath();
+                        ctx.arc(0, s*1.8, 3, 0, Math.PI*2);
+                        ctx.fill();
                     }
-                    ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(0, s*1.8, 3, 0, Math.PI*2);
-                    ctx.fill();
                     ctx.restore();
 
                     // Neck & Head
@@ -6073,6 +7265,26 @@
                 mmCtx.fill();
             }
 
+            if (G.endGameMode === 'STORM' && G.endGameTriggered) {
+                const mcx = (G.mapSize.w / 2) * sx;
+                const mcy = (G.mapSize.h / 2) * sy;
+                const mr = G.stormRadius * sx;
+                
+                mmCtx.save();
+                mmCtx.fillStyle = 'rgba(150, 0, 0, 0.35)';
+                mmCtx.beginPath();
+                mmCtx.rect(0, 0, W, H);
+                mmCtx.arc(mcx, mcy, mr, 0, Math.PI * 2, true);
+                mmCtx.fill();
+                
+                mmCtx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
+                mmCtx.lineWidth = 2;
+                mmCtx.beginPath();
+                mmCtx.arc(mcx, mcy, mr, 0, Math.PI * 2);
+                mmCtx.stroke();
+                mmCtx.restore();
+            }
+
             const camLeft = G.cam.x;
             const camTop = G.cam.y;
             const camRight = camLeft + canvas.width / G.cam.scale;
@@ -6181,21 +7393,32 @@
             ctx.scale(G.cam.scale, G.cam.scale);
             ctx.translate(-G.cam.x, -G.cam.y);
 
-            const elementsToDraw = [];
+            // Base layer: real props, doors, and disguised ghosts (Y-sorted for depth)
+            // Top layer: non-disguised players including hunter (always above props)
+            const baseElements = [];
+            const topElements  = [];
 
             const showProps = (G.phase === 'HUNT') ||
                               (G.phase === 'RECON' && myRole === 'hunter') ||
                               (G.phase === 'CACHE' && myRole === 'prop');
             if (showProps) {
                 for (const p of G.props) {
-                    elementsToDraw.push({ type: 'prop', y: p.y, data: p });
+                    // Hide original prop if possessed by an active player standing right on it
+                    const isPossessed = Object.entries(G.players).some(([id, pl]) => {
+                        if (!pl.disguised || pl.possessedPropId !== p.id || pl.eliminated) return false;
+                        const ip = interpolatedPlayers[id] || pl;
+                        return Math.hypot(ip.x - p.x, ip.y - p.y) < 8;
+                    });
+                    if (!isPossessed) {
+                        baseElements.push({ type: 'prop', y: p.y, data: p });
+                    }
                 }
             }
 
             // Draw confinement doors if in Depot Alpha map
             if (G.theme === 'Depot Alpha' && G.doors) {
                 for (const door of G.doors) {
-                    elementsToDraw.push({ type: 'door', y: door.y, data: door });
+                    baseElements.push({ type: 'door', y: door.y, data: door });
                 }
             }
 
@@ -6211,30 +7434,56 @@
                 };
 
                 if (myRole === 'hunter' && p.disguised && id !== localPlayerId) {
-                    elementsToDraw.push({
+                    // Disguised ghosts blend into the base prop layer for correct depth sorting
+                    baseElements.push({
                         type: 'prop',
                         y: ip.y,
                         data: { ...renderData, type: p.disguiseType, angle: ip.disguiseAngle, radius: p.disguiseRadius || 22, animated: false }
                     });
                 } else {
-                    elementsToDraw.push({ type: 'player', y: ip.y, id, data: renderData });
+                    // All visible players (hunter + undisguised ghosts) always render on top
+                    topElements.push({ type: 'player', y: ip.y, id, data: renderData });
                 }
             }
 
-            elementsToDraw.sort((a, b) => a.y - b.y);
+            baseElements.sort((a, b) => a.y - b.y);
+            topElements.sort((a, b) => a.y - b.y);
 
-            for (const ent of elementsToDraw) {
+            for (const ent of baseElements) {
                 if (ent.type === 'prop') {
                     drawHunterProp(ent.data, 1.0);
                 } else if (ent.type === 'door') {
                     drawDoorShape(ent.data);
-                } else {
-                    drawHunterPlayer(ent.id, ent.data);
                 }
+            }
+            for (const ent of topElements) {
+                drawHunterPlayer(ent.id, ent.data);
             }
 
             drawHunterEffects();
             drawDeathParticles(G.cam.x, G.cam.y, G.cam.scale);
+
+            // Draw Storm Zone inside camera view
+            if (G.endGameMode === 'STORM' && G.endGameTriggered) {
+                const cx = G.mapSize.w / 2;
+                const cy = G.mapSize.h / 2;
+                ctx.save();
+                ctx.fillStyle = 'rgba(150, 0, 0, 0.25)';
+                ctx.beginPath();
+                ctx.rect(0, 0, G.mapSize.w, G.mapSize.h);
+                ctx.arc(cx, cy, G.stormRadius, 0, Math.PI * 2, true);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
+                ctx.lineWidth = 6;
+                ctx.shadowColor = 'rgba(255, 0, 100, 0.9)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(cx, cy, G.stormRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+
             ctx.restore();
 
             // Heartbeat beep system for local hunter
@@ -6306,6 +7555,59 @@
                 return;
             }
             if (hud.style.display !== 'block' && gameOverMenu.classList.contains('hidden')) return;
+
+            // Compute frame delta time and update the countdown smoothly locally
+            const clientNow = performance.now();
+            const frameDt = clientNow - clientLastTime;
+            clientLastTime = clientNow;
+
+            if (!classicEndGameTriggered && classicEndGameCountdownRemaining > 0) {
+                classicEndGameCountdownRemaining = Math.max(0, classicEndGameCountdownRemaining - frameDt);
+            }
+
+            // Update classic timer in HUD
+            const timerEl = document.getElementById('classicTimer');
+            if (timerEl) {
+                const endgameSec = Math.ceil((classicEndGameCountdownRemaining || 0) / 1000);
+                let timeStr = '';
+                if (classicEndGameTriggered) {
+                    if (classicEndGameMode === 'STORM') {
+                        timeStr = (currentLang === 'en') ? 'STORM ACTIVE!' : 'TEMPÊTE ACTIVE !';
+                        timerEl.style.color = 'var(--pink)';
+                    } else if (classicEndGameMode === 'TEMPETE') {
+                        timeStr = (currentLang === 'en') ? 'TEMPEST ACTIVE!' : 'TEMPÊTE ACTIVE !';
+                        timerEl.style.color = 'var(--pink)';
+                    } else if (classicEndGameMode === 'FREEZE') {
+                        timeStr = (currentLang === 'en') ? 'BOTS FROZEN!' : 'BOTS FIGÉS !';
+                        timerEl.style.color = '#ffff00';
+                    } else if (classicEndGameMode === 'GEL') {
+                        timeStr = (currentLang === 'en') ? 'BOTS FROZEN!' : 'BOTS FIGÉS !';
+                        timerEl.style.color = '#88eeff';
+                    } else if (classicEndGameMode === 'PURGE') {
+                        timeStr = (currentLang === 'en') ? 'PURGE ACTIVE!' : 'PURGE ACTIVE !';
+                        timerEl.style.color = '#ffaa00';
+                    } else if (classicEndGameMode === 'DISPARITION') {
+                        timeStr = (currentLang === 'en') ? 'VANISHING...' : 'DISPARITION...';
+                        timerEl.style.color = '#ff6600';
+                    }
+                } else if (endgameSec > 0) {
+                    timerEl.style.color = 'var(--green)';
+                    if (classicEndGameMode === 'STORM') {
+                        timeStr = ((currentLang === 'en') ? 'STORM IN: ' : 'ZONE DANS : ') + endgameSec + 's';
+                    } else if (classicEndGameMode === 'TEMPETE') {
+                        timeStr = ((currentLang === 'en') ? 'TEMPEST IN: ' : 'TEMPÊTE DANS : ') + endgameSec + 's';
+                    } else if (classicEndGameMode === 'FREEZE') {
+                        timeStr = ((currentLang === 'en') ? 'FREEZE IN: ' : 'GEL DANS : ') + endgameSec + 's';
+                    } else if (classicEndGameMode === 'GEL') {
+                        timeStr = ((currentLang === 'en') ? 'CRYO-GEL IN: ' : 'GEL DANS : ') + endgameSec + 's';
+                    } else if (classicEndGameMode === 'PURGE') {
+                        timeStr = ((currentLang === 'en') ? 'PURGE IN: ' : 'PURGE DANS : ') + endgameSec + 's';
+                    } else if (classicEndGameMode === 'DISPARITION') {
+                        timeStr = ((currentLang === 'en') ? 'VANISH IN: ' : 'DISPARITION DANS : ') + endgameSec + 's';
+                    }
+                }
+                timerEl.textContent = timeStr;
+            }
 
             // --- Interpolation update ---
             // Build active ID set in one pass (no intermediate array)
@@ -6391,6 +7693,28 @@
             const vBottom = CAMERA.y + canvas.height + MARGIN;
 
             drawEnvironment();
+
+            // Draw Storm Zone inside camera view for classic mode
+            if ((classicEndGameMode === 'STORM' || classicEndGameMode === 'TEMPETE') && classicEndGameTriggered) {
+                ctx.save();
+                ctx.translate(-CAMERA.x, -CAMERA.y);
+                const cx = MAP_SIZE.w / 2;
+                const cy = MAP_SIZE.h / 2;
+                ctx.fillStyle = 'rgba(150, 0, 0, 0.25)';
+                ctx.beginPath();
+                ctx.rect(0, 0, MAP_SIZE.w, MAP_SIZE.h);
+                ctx.arc(cx, cy, classicStormRadius, 0, Math.PI * 2, true);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
+                ctx.lineWidth = 6;
+                ctx.shadowColor = 'rgba(255, 0, 100, 0.9)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(cx, cy, classicStormRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
 
             ctx.save();
             ctx.translate(-CAMERA.x, -CAMERA.y);
@@ -6818,7 +8142,7 @@
                 const isMoving = ent.vx * ent.vx + ent.vy * ent.vy > 0.01;
 
                 const isSpectatingThis = (myLives <= 0 && ent.id === spectateTargetId);
-                ctx.globalAlpha = (ent.inBush && ent.id !== localPlayerId && !isSpectatingThis) ? 0.25 : 1;
+                ctx.globalAlpha = (ent.inBush) ? ((ent.id === localPlayerId || isSpectatingThis) ? 0.5 : 0) : 1;
 
                 if (ent.isRevealed) {
                     ctx.save();
@@ -6943,12 +8267,24 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        ctx.fillStyle = 'rgba(46, 67, 42, 0.38)';
+                        let isNearBush = false;
+                        if (targetEnt) {
+                            const dx = targetEnt.x - dec.x;
+                            const dy = targetEnt.y - dec.y;
+                            const distSq = dx * dx + dy * dy;
+                            const checkRadius = r * 1.35;
+                            if (distSq < checkRadius * checkRadius) {
+                                isNearBush = true;
+                            }
+                        }
+                        ctx.globalAlpha = isNearBush ? 0.38 : 0.98;
+                        
+                        ctx.fillStyle = 'rgba(46, 67, 42, 1.0)';
                         ctx.beginPath();
                         ctx.arc(0, 0, foliageR, 0, Math.PI * 2);
                         ctx.fill();
                         
-                        ctx.strokeStyle = 'rgba(15, 25, 12, 0.45)';
+                        ctx.strokeStyle = 'rgba(15, 25, 12, 1.0)';
                         ctx.lineWidth = 1;
                         ctx.beginPath();
                         for (let d = -foliageR; d <= foliageR; d += 12) {
@@ -7024,12 +8360,24 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        ctx.fillStyle = 'rgba(30, 32, 38, 0.45)';
+                        let isNearBush = false;
+                        if (targetEnt) {
+                            const dx = targetEnt.x - dec.x;
+                            const dy = targetEnt.y - dec.y;
+                            const distSq = dx * dx + dy * dy;
+                            const checkRadius = r * 1.35;
+                            if (distSq < checkRadius * checkRadius) {
+                                isNearBush = true;
+                            }
+                        }
+                        ctx.globalAlpha = isNearBush ? 0.45 : 0.98;
+                        
+                        ctx.fillStyle = 'rgba(30, 32, 38, 1.0)';
                         ctx.beginPath();
                         ctx.arc(0, 0, foliageR, 0, Math.PI * 2);
                         ctx.fill();
                         
-                        ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+                        ctx.strokeStyle = 'rgba(0, 0, 0, 1.0)';
                         ctx.lineWidth = 1.2;
                         ctx.beginPath();
                         for (let d = -foliageR; d <= foliageR; d += 16) {
@@ -7093,12 +8441,24 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        ctx.fillStyle = 'rgba(0, 40, 35, 0.22)';
+                        let isNearBush = false;
+                        if (targetEnt) {
+                            const dx = targetEnt.x - dec.x;
+                            const dy = targetEnt.y - dec.y;
+                            const distSq = dx * dx + dy * dy;
+                            const checkRadius = r * 1.35;
+                            if (distSq < checkRadius * checkRadius) {
+                                isNearBush = true;
+                            }
+                        }
+                        ctx.globalAlpha = isNearBush ? 0.35 : 0.98;
+                        
+                        ctx.fillStyle = 'rgba(0, 40, 35, 1.0)';
                         ctx.beginPath();
                         ctx.arc(0, 0, foliageR, 0, Math.PI * 2);
                         ctx.fill();
 
-                        ctx.strokeStyle = 'rgba(0, 255, 170, 0.32)';
+                        ctx.strokeStyle = 'rgba(0, 255, 170, 1.0)';
                         ctx.lineWidth = 1.5;
                         ctx.beginPath();
                         ctx.arc(0, 0, foliageR, 0, Math.PI * 2);
@@ -7261,12 +8621,33 @@
                         minimapCtx.arc(ex, ey, 4.5, 0, Math.PI * 2);
                         minimapCtx.fill();
                         minimapCtx.shadowBlur = 0;
-                    } else if (ent.isPlayer && mapRule !== 'radar') {
+                    } else if (ent.isPlayer && mapRule !== 'radar' && !ent.inBush) {
                         minimapCtx.fillStyle = '#f0ad4e';
                         minimapCtx.beginPath();
                         minimapCtx.arc(ex, ey, 3, 0, Math.PI * 2);
                         minimapCtx.fill();
                     }
+                }
+
+                // Draw Storm Zone on classic minimap
+                if ((classicEndGameMode === 'STORM' || classicEndGameMode === 'TEMPETE') && classicEndGameTriggered) {
+                    const mcx = (MAP_SIZE.w / 2) * scale;
+                    const mcy = (MAP_SIZE.h / 2) * scale;
+                    const mr = classicStormRadius * scale;
+                    
+                    minimapCtx.save();
+                    minimapCtx.fillStyle = 'rgba(150, 0, 0, 0.35)';
+                    minimapCtx.beginPath();
+                    minimapCtx.rect(0, 0, MM_SIZE, MM_SIZE);
+                    minimapCtx.arc(mcx, mcy, mr, 0, Math.PI * 2, true);
+                    minimapCtx.fill();
+                    
+                    minimapCtx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
+                    minimapCtx.lineWidth = 2;
+                    minimapCtx.beginPath();
+                    minimapCtx.arc(mcx, mcy, mr, 0, Math.PI * 2);
+                    minimapCtx.stroke();
+                    minimapCtx.restore();
                 }
             }
 
@@ -7331,6 +8712,128 @@
             // Summary
             const status = failed === 0 ? '✓ All' : `✗ ${failed} failed,`;
             console.log(`[TESTS] ${status} ${passed} passed`);
+        })();
+
+        // ── Rules overlay ──────────────────────────────────────────────────
+        (function initRulesOverlay() {
+            const overlay = document.getElementById('rulesOverlay');
+            const btn     = document.getElementById('btnCloseRules');
+
+            // Skip rules if returning from a room (page reload after leave)
+            if (sessionStorage.getItem('mimic_came_from_room')) {
+                sessionStorage.removeItem('mimic_came_from_room');
+                overlay.remove();
+                startMenuMusic();
+                return;
+            }
+            const btnRulesLang = document.getElementById('btnRulesLang');
+
+            const TEXTS = {
+                fr: {
+                    subtitle: '// BRIEFING DE MISSION //',
+                    ref: 'RÉF-OPS-001 — CLASSIFICATION : RECRUES',
+                    mimic_badge: 'CLASSIQUE',
+                    role_agent: 'AGENT', role_agent_desc: 'Chasseur &amp; Proie',
+                    m1: 'Tous les joueurs sont mélangés aux bots dans l\'arène',
+                    m2: 'Chaque joueur est à la fois <strong>chasseur</strong> et <strong>proie</strong>',
+                    m3: 'Repère les vrais joueurs sans te faire repérer toi-même',
+                    m4: 'Élimine les adversaires avant qu\'ils ne t\'éliminent',
+                    m5: 'Imite les bots pour rester discret — un faux mouvement te trahit',
+                    m_event: '⚠ ÉVÉNEMENT FINAL ALÉATOIRE EN FIN DE PARTIE',
+                    hunter_badge: 'PROP HUNT',
+                    role_hunter: 'CHASSEUR', role_hunter_desc: 'Débusque les props',
+                    role_prop: 'PROP', role_prop_desc: 'Se déguise en objet',
+                    h1: 'Les <strong>Props</strong> se déguisent en objets du décor',
+                    h2: 'Le <strong>Chasseur</strong> doit débusquer et taguer tous les props',
+                    h3: 'Les Props peuvent bouger — mais choisissez le bon moment !',
+                    h4: 'Le Chasseur perd de la vie si le temps passe sans trouver personne',
+                    h_event: '⚠ PHASE DE CONFINEMENT SE DÉCLENCHE EN FIN DE PARTIE',
+                    btn: '▶ LANCER LA MISSION',
+                    hint: '// SON ACTIVÉ AU DÉMARRAGE //',
+                },
+                en: {
+                    subtitle: '// MISSION BRIEFING //',
+                    ref: 'REF-OPS-001 — CLASSIFICATION: RECRUITS',
+                    mimic_badge: 'CLASSIC',
+                    role_agent: 'AGENT', role_agent_desc: 'Hunter &amp; Prey',
+                    m1: 'All players are mixed among bots across the arena',
+                    m2: 'Every player is both <strong>hunter</strong> and <strong>prey</strong>',
+                    m3: 'Spot real players before they spot you',
+                    m4: 'Eliminate opponents before they eliminate you',
+                    m5: 'Mimic the bots to stay hidden — one wrong move gives you away',
+                    m_event: '⚠ RANDOM END-GAME EVENT WHEN TIME RUNS LOW',
+                    hunter_badge: 'PROP HUNT',
+                    role_hunter: 'HUNTER', role_hunter_desc: 'Finds all props',
+                    role_prop: 'PROP', role_prop_desc: 'Disguises as object',
+                    h1: '<strong>Props</strong> disguise themselves as objects in the scene',
+                    h2: 'The <strong>Hunter</strong> must find and tag every hidden player',
+                    h3: 'Props can move — but choose your moment wisely!',
+                    h4: 'The Hunter loses HP every second no prop is found',
+                    h_event: '⚠ CONFINEMENT PHASE TRIGGERS NEAR END OF GAME',
+                    btn: '▶ LAUNCH MISSION',
+                    hint: '// SOUND ENABLED ON START //',
+                },
+            };
+
+            const rlDropdown = document.getElementById('rlLangDropdown');
+            const rlFlag     = document.getElementById('rlLangFlag');
+            const rlText     = document.getElementById('rlLangText');
+
+            function applyRulesLang(lang) {
+                const t = TEXTS[lang] || TEXTS.fr;
+                const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+                set('rl_subtitle',       t.subtitle);
+                set('rl_ref',            t.ref);
+                set('rl_mimic_badge',    t.mimic_badge);
+                set('rl_role_agent',     t.role_agent);
+                set('rl_role_agent_desc',t.role_agent_desc);
+                set('rl_m1',             t.m1);
+                set('rl_m2',        t.m2);
+                set('rl_m3',        t.m3);
+                set('rl_m4',        t.m4);
+                set('rl_m5',        t.m5);
+                set('rl_m_event',   t.m_event);
+                set('rl_hunter_title',    '◈ HUNTER MODE');
+                set('rl_hunter_badge',    t.hunter_badge);
+                set('rl_role_hunter',     t.role_hunter);
+                set('rl_role_hunter_desc',t.role_hunter_desc);
+                set('rl_role_prop',       t.role_prop);
+                set('rl_role_prop_desc',  t.role_prop_desc);
+                set('rl_h1',        t.h1);
+                set('rl_h2',        t.h2);
+                set('rl_h3',        t.h3);
+                set('rl_h4',        t.h4);
+                set('rl_h_event',   t.h_event);
+                btn.textContent = t.btn;
+                set('rl_hint', t.hint);
+                if (rlFlag) rlFlag.textContent = lang === 'en' ? '🇬🇧' : '🇫🇷';
+                if (rlText) rlText.textContent = lang === 'en' ? 'EN' : 'FR';
+            }
+
+            applyRulesLang(currentLang);
+
+            // Dropdown open/close
+            btnRulesLang.addEventListener('click', (e) => {
+                e.stopPropagation();
+                rlDropdown.style.display = rlDropdown.style.display === 'none' ? 'block' : 'none';
+            });
+            document.addEventListener('click', () => { rlDropdown.style.display = 'none'; });
+
+            // Language option selection
+            document.querySelectorAll('[data-rllang]').forEach(el => {
+                el.addEventListener('click', () => {
+                    const lang = el.getAttribute('data-rllang');
+                    rlDropdown.style.display = 'none';
+                    applyLanguage(lang);
+                    applyRulesLang(lang);
+                });
+            });
+
+            btn.addEventListener('click', () => {
+                overlay.classList.add('hiding');
+                startMenuMusic();
+                overlay.addEventListener('animationend', () => overlay.remove(), { once: true });
+            });
         })();
 
     </script>

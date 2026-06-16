@@ -1,5 +1,11 @@
 'use strict';
 
+function generateSessionToken() {
+    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+}
+
+const pendingRejoin = {}; // token → { room, socketId, isHunter, timer }
+
 const FPS = 60;
 const HUNTER_HEALTH_MAX = 100;
 const HUNTER_WRONG_PENALTY = 5;   // -5 PV que ce soit décor ou miss
@@ -521,7 +527,7 @@ class HunterRoom {
         this.state    = 'LOBBY';
         this.theme    = 'Depot Alpha';
         this.hostId   = hostSocket.id;
-        this.MAX_PLAYERS   = 4;
+        this.MAX_PLAYERS   = 6;
         this.MAX_COUNTDOWN = 45;
 
         this.countdownTimer   = null;
@@ -576,6 +582,10 @@ class HunterRoom {
             teleportReadyAt: 0
         };
 
+        const token = generateSessionToken();
+        this.players[socket.id].sessionToken = token;
+        socket.emit('sessionToken', { token, roomCode: this.roomId, isHunter: true });
+
         socket.join(this.roomId);
         this._bindSocket(socket);
 
@@ -606,7 +616,7 @@ class HunterRoom {
             const allReady = keys.every(k => this.players[k].isReady);
             if (keys.length >= this.MAX_PLAYERS && allReady) {
                 this.stopCountdown();
-                this.startGame();
+                this.startShuffle();
                 return;
             }
             if (this.isQuickMatch) {
@@ -710,7 +720,7 @@ class HunterRoom {
                     this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
                     return;
                 }
-                this.startGame();
+                this.startShuffle();
                 return;
             }
             this.broadcastCountdown();
@@ -726,23 +736,75 @@ class HunterRoom {
     }
 
     broadcastCountdown() {
-        const humans = Object.values(this.players);
-        const slots  = Array.from({ length: this.MAX_PLAYERS }, (_, i) => {
-            const p = humans[i];
-            return p ? { type: 'player', ready: p.isReady, num: p.playerNum, avatar: p.avatar } : { type: 'empty' };
+        const humans = Object.values(this.players).filter(p => !p.isBot);
+        const realCount = humans.length;
+
+        let fakeCount = 0;
+        if (this.isQuickMatch && realCount === 1 && this.countdownSeconds <= 5 && this.countdownSeconds > 0) {
+            fakeCount = Math.min(this.MAX_PLAYERS - realCount, 6 - this.countdownSeconds);
+        }
+
+        const slots = Array.from({ length: this.MAX_PLAYERS }, (_, i) => {
+            if (i < realCount) {
+                const p = humans[i];
+                return { type: 'player', ready: p.isReady, num: p.playerNum };
+            }
+            if (this.isQuickMatch && i < realCount + fakeCount) {
+                return { type: 'player', ready: true, num: i + 1 };
+            }
+            if (this.isQuickMatch) return { type: 'searching' };
+            return { type: 'empty' };
         });
+
         this.io.to(this.roomId).emit('lobbyCountdown', {
-            seconds:     this.isQuickMatch ? this.countdownSeconds : null,
-            total:       this.MAX_COUNTDOWN,
+            seconds: this.isQuickMatch ? this.countdownSeconds : null,
+            total: this.MAX_COUNTDOWN,
             slots,
-            readyCount:  humans.filter(p => p.isReady).length,
-            playerCount: humans.length,
-            hostId:      this.hostId,
-            isQuickMatch: this.isQuickMatch
+            readyCount: humans.filter(p => p.isReady).length + fakeCount,
+            playerCount: realCount + fakeCount,
+            hostId: this.hostId,
+            isQuickMatch: this.isQuickMatch,
+            state: this.state
         });
     }
 
-    // ─── Game Start ─────────────────────────────
+    // ─── Game Shuffle & Start ────────────────────
+    startShuffle() {
+        if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
+        this.stopCountdown();
+        this.state = 'SHUFFLING';
+
+        // Mark all human players as ready
+        for (const p of Object.values(this.players)) {
+            p.isReady = true;
+        }
+
+        // Choose random map (theme)
+        const themes = ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique'];
+        this.theme = themes[Math.floor(Math.random() * themes.length)];
+
+        // Choose random end-game mode
+        const modes = ['STORM', 'FREEZE', 'PURGE'];
+        this.endGameMode = modes[Math.floor(Math.random() * modes.length)];
+
+        // Shuffling duration (shorter for tests)
+        const isTest = (this.roomId === 'HUNTER' || this.roomId.toLowerCase().includes('test'));
+        const duration = isTest ? 500 : 3000;
+
+        // Emit shuffle command to all clients
+        this.io.to(this.roomId).emit('hunterRoomShuffle', {
+            map: this.theme,
+            mode: this.endGameMode,
+            duration: duration
+        });
+
+        // Set timeout to start the game after the shuffling animation + drama delay
+        const serverDelay = isTest ? 500 : (duration + 1500);
+        this.shuffleTimeout = setTimeout(() => {
+            this.startGame();
+        }, serverDelay);
+    }
+
     startGame() {
         const mapDef     = HUNTER_MAPS[this.theme] || HUNTER_MAPS['Depot Alpha'];
         this.mapSize     = { w: mapDef.w, h: mapDef.h };
@@ -758,6 +820,12 @@ class HunterRoom {
         this.droneRevealEndsAt = 0;
         this.hunterPowers = { droneUsed: false };
 
+        this.endGameMode = this.endGameMode || 'STORM';
+        this.endGameTriggered = false;
+        this.endGameCountdownRemaining = 30000;
+        this.stormRadius = 2500;
+        this.lastBotPurgeTime = 0;
+
         if (this.theme === 'Depot Alpha') {
             this.doors = genResult.doors;
         } else if (this.theme === 'Bloc Tactique') {
@@ -771,7 +839,7 @@ class HunterRoom {
         const currentHumanIds = Object.keys(this.players);
         const shouldFillBots = this.isQuickMatch || (currentHumanIds.length === 1);
         if (shouldFillBots && currentHumanIds.length < this.MAX_PLAYERS) {
-            const botNames = ['🤖 OPÉRATEUR-ALPHA', '🤖 SPECTRE-BRAVO', '🤖 AGENT-DELTA', '🤖 PHANTOM-SIGMA'];
+            const botNames = ['🤖 OPÉRATEUR-ALPHA', '🤖 SPECTRE-BRAVO', '🤖 AGENT-DELTA', '🤖 PHANTOM-SIGMA', '🤖 OMBRE-EPSILON'];
             const hostAvatar = this.players[this.hostId]?.avatar || 'Combat-Operative';
             let botIndex = 0;
             for (let i = currentHumanIds.length; i < this.MAX_PLAYERS; i++) {
@@ -824,6 +892,7 @@ class HunterRoom {
             p.eliminated   = false;
             p.disguised    = false;
             p.disguiseType = null;
+            p.possessedPropId = null;
             p.hasDisguised = false;
             p.lives        = 3;
             p.smokeUsed    = false;
@@ -1072,9 +1141,14 @@ class HunterRoom {
         p.disguiseType   = prop.type;
         p.disguiseAngle  = prop.angle;
         p.disguiseRadius = prop.radius;
+        p.possessedPropId = prop.id; // Store possessed prop ID
         p.hasDisguised   = true;
 
-        this.io.to(this.roomId).emit('hunterDisguised', { id: socketId, type: prop.type, angle: prop.angle, radius: prop.radius });
+        // Snap player exactly to the prop's center
+        p.x = prop.x;
+        p.y = prop.y;
+
+        this.io.to(this.roomId).emit('hunterDisguised', { id: socketId, type: prop.type, angle: prop.angle, radius: prop.radius, possessedPropId: prop.id });
     }
 
     // ─── Tag (chasseur) ─────────────────────────
@@ -1267,6 +1341,79 @@ class HunterRoom {
             this._updateMovement(p);
         }
 
+        // Handle endgame countdown and triggering during HUNT phase
+        if (this.phase === 'HUNT') {
+            if (!this.endGameTriggered) {
+                this.endGameCountdownRemaining = Math.max(0, this.endGameCountdownRemaining - dt);
+                if (this.endGameCountdownRemaining <= 0) {
+                    this.endGameTriggered = true;
+                    this.io.to(this.roomId).emit('hunterEndGameModeTriggered', { mode: this.endGameMode });
+                    if (this.endGameMode === 'PURGE') {
+                        this.lastBotPurgeTime = now;
+                    }
+                }
+            } else {
+                // Apply active endgame mode ticks
+                if (this.endGameMode === 'STORM') {
+                    // Shrink storm radius
+                    this.stormRadius = Math.max(0, this.stormRadius - 28 * (dt / 1000));
+                    
+                    // Center of the map
+                    const cx = this.mapSize.w / 2;
+                    const cy = this.mapSize.h / 2;
+                    
+                    for (const [id, pl] of Object.entries(this.players)) {
+                        if (pl.role === 'prop' && !pl.eliminated) {
+                            const dx = pl.x - cx;
+                            const dy = pl.y - cy;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist > this.stormRadius) {
+                                pl.timeOutsideStorm = (pl.timeOutsideStorm || 0) + dt;
+                                if (pl.timeOutsideStorm >= 1000) {
+                                    pl.timeOutsideStorm = 0;
+                                    pl.lives--;
+                                    this.io.to(this.roomId).emit('hunterLivesUpdated', { id, lives: pl.lives });
+                                    if (pl.lives <= 0) {
+                                        pl.eliminated = true;
+                                        pl.disguised = false;
+                                        this.io.to(this.roomId).emit('hunterEliminated', { id });
+                                        
+                                        // Check if any props remain
+                                        const propsAlive = Object.values(this.players).filter(k => k.role === 'prop' && !k.eliminated);
+                                        if (propsAlive.length === 0) {
+                                            this.endGame('hunter');
+                                            return;
+                                        }
+                                    }
+                                }
+                            } else {
+                                pl.timeOutsideStorm = 0;
+                            }
+                        }
+                    }
+                } else if (this.endGameMode === 'PURGE') {
+                    if (now - this.lastBotPurgeTime >= 5000) {
+                        this.lastBotPurgeTime = now;
+                        const botProps = Object.entries(this.players).filter(([id, pl]) => pl.isBot && pl.role === 'prop' && !pl.eliminated);
+                        if (botProps.length > 0) {
+                            const [purgeId, purgeBot] = botProps[Math.floor(Math.random() * botProps.length)];
+                            purgeBot.eliminated = true;
+                            purgeBot.disguised = false;
+                            purgeBot.lives = 0;
+                            this.io.to(this.roomId).emit('hunterLivesUpdated', { id: purgeId, lives: 0 });
+                            this.io.to(this.roomId).emit('hunterEliminated', { id: purgeId });
+                            
+                            const propsAlive = Object.values(this.players).filter(pl => pl.role === 'prop' && !pl.eliminated);
+                            if (propsAlive.length === 0) {
+                                this.endGame('hunter');
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         this.netTickTimer += dt;
         if (this.netTickTimer >= NET_TICK_MS) {
             this.netTickTimer = 0;
@@ -1278,7 +1425,11 @@ class HunterRoom {
                 hunterHealth: this.hunterHealth,
                 doors:        this.doors.map(d => ({ id: d.id, x: d.x, y: d.y, w: d.w, h: d.h, consoleX: d.consoleX, consoleY: d.consoleY, open: d.open })),
                 smokes:       this.smokes.map(s => ({ x: s.x, y: s.y, radius: s.radius, remaining: Math.max(0, s.endsAt - now) })),
-                droneZone:    (this.droneRevealEndsAt && now < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null
+                droneZone:    (this.droneRevealEndsAt && now < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null,
+                endGameMode:  this.endGameMode,
+                endGameTriggered: this.endGameTriggered,
+                endGameCountdownRemaining: this.endGameCountdownRemaining,
+                stormRadius:  this.stormRadius
             });
         }
     }
@@ -1286,6 +1437,12 @@ class HunterRoom {
     _updateBotAI(p, dt) {
         if (p.eliminated) {
             p.input = { up: false, down: false, left: false, right: false };
+            return;
+        }
+        if (this.endGameTriggered && this.endGameMode === 'FREEZE') {
+            p.input = { up: false, down: false, left: false, right: false };
+            p.vx = 0;
+            p.vy = 0;
             return;
         }
 
@@ -1772,6 +1929,7 @@ class HunterRoom {
                 disguiseType:  p.disguiseType,
                 disguiseAngle: p.disguiseAngle,
                 disguiseRadius:p.disguiseRadius,
+                possessedPropId: p.possessedPropId || null,
                 eliminated:    p.eliminated,
                 lives:         p.lives,
                 avatar:       p.avatar,
@@ -1827,9 +1985,57 @@ class HunterRoom {
     }
 
     handleDisconnect(socketId) {
+        const p = this.players[socketId];
+        if (!p) return;
+
+        const wasInGame = this.state === 'PLAYING';
+
+        // Host migration
+        if (socketId === this.hostId) {
+            const next = Object.entries(this.players)
+                .filter(([id, pl]) => !pl.isBot && id !== socketId)
+                .sort(([, a], [, b]) => a.playerNum - b.playerNum)[0];
+            if (next) {
+                this.hostId = next[0];
+                this.io.to(this.roomId).emit('hostMigrated', { newHostId: this.hostId });
+            }
+        }
+
+        // Grace period during game for human players
+        if (wasInGame && !p.isBot && p.sessionToken) {
+            const token = p.sessionToken;
+            p.disconnected = true;
+            p.socket = null;
+            p.input = { up: false, down: false, left: false, right: false };
+
+            pendingRejoin[token] = {
+                room: this,
+                socketId,
+                isHunter: true,
+                timer: setTimeout(() => {
+                    delete pendingRejoin[token];
+                    this._permanentRemove(socketId);
+                }, 15000)
+            };
+
+            this.io.to(this.roomId).emit('playerDisconnected', { socketId, graceSecs: 15 });
+            return;
+        }
+
+        delete this.players[socketId];
+        this._checkAfterRemoval(socketId, wasInGame);
+    }
+
+    _permanentRemove(socketId) {
+        const p = this.players[socketId];
+        if (!p) return;
         const wasInGame = this.state === 'PLAYING';
         delete this.players[socketId];
+        this._checkAfterRemoval(socketId, wasInGame);
+        this.io.to(this.roomId).emit('playerLeft', { socketId });
+    }
 
+    _checkAfterRemoval(socketId, wasInGame) {
         const humansLeft = Object.values(this.players).filter(p => !p.isBot).length;
         if (humansLeft === 0) {
             this.stopCountdown();
@@ -1850,6 +2056,37 @@ class HunterRoom {
             this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
         }
     }
+
+    rejoinPlayer(newSocket, oldSocketId) {
+        const p = this.players[oldSocketId];
+        if (!p) { newSocket.emit('rejoinFailed'); return; }
+
+        const token = generateSessionToken();
+        this.players[newSocket.id] = { ...p, socket: newSocket, disconnected: false, sessionToken: token };
+        delete this.players[oldSocketId];
+
+        newSocket.join(this.roomId);
+        this._bindSocket(newSocket);
+
+        newSocket.emit('rejoinSuccess', {
+            mode: 'hunter',
+            sessionToken: token,
+            roomCode: this.roomId,
+            isHunter: true,
+            role: p.role,
+            phase: this.phase,
+            remaining: Math.max(0, this.phaseEndsAt - Date.now()),
+            hunterHealth: this.hunterHealth,
+            hunterId: this.hunterId,
+            theme: this.theme,
+            mapSize: this.mapSize,
+            props: this.props,
+            seed: this.seed,
+            roles: this._getRolesPayload()
+        });
+
+        this.io.to(this.roomId).emit('playerRejoined', { socketId: newSocket.id, oldSocketId });
+    }
 }
 
-module.exports = { HunterRoom, HUNTER_MAPS, BIOME_POOLS };
+module.exports = { HunterRoom, HUNTER_MAPS, BIOME_POOLS, pendingRejoin };
