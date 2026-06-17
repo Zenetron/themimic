@@ -1,10 +1,17 @@
 'use strict';
 
-function generateSessionToken() {
-    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-}
-
-const pendingRejoin = {}; // token → { room, socketId, isHunter, timer }
+const {
+    generateSessionToken,
+    migrateHostOnDisconnect,
+    startGracePeriod,
+    resumeLoopIfPaused,
+    cleanupRoomIfEmpty,
+    beginRejoin,
+    broadcastCountdown: broadcastCountdownShared,
+    safeOn,
+    safeTick,
+    isRateLimited
+} = require('./room-lifecycle');
 
 const FPS = 60;
 const HUNTER_HEALTH_MAX = 100;
@@ -20,6 +27,31 @@ const PHASE_DURATIONS = {
     CACHE: 30000,
     HUNT: 240000
 };
+
+// Endgame mode (STORM/FREEZE/PURGE) triggers this many ms before HUNT ends,
+// not after HUNT starts — storm fully closes (2500 / 28px/s ≈ 89s) right around phase end.
+const ENDGAME_LEAD_MS = 90000;
+
+// Props periodically make noise during HUNT — interval shrinks from NOISE_START_INTERVAL
+// down to NOISE_MIN_INTERVAL as the phase progresses. The hunter only hears it within
+// NOISE_HEAR_RADIUS, louder the closer the source — no position is ever sent to the client.
+const NOISE_START_INTERVAL = 22000;
+const NOISE_MIN_INTERVAL   = 6000;
+const NOISE_HEAR_RADIUS    = 850;
+
+// Coerces an untrusted 'hunterInput' payload into a safe boolean-only shape,
+// so a malformed/malicious client can't crash movement code or store garbage.
+function sanitizeMovementInput(input) {
+    if (!input || typeof input !== 'object') {
+        return { up: false, down: false, left: false, right: false };
+    }
+    return {
+        up:    !!input.up,
+        down:  !!input.down,
+        left:  !!input.left,
+        right: !!input.right
+    };
+}
 
 // ──────────────────────────────────────────────
 // BIOMES — props par thème de map
@@ -71,6 +103,21 @@ const HUNTER_MAPS = {
     'Zone Charlie':  { w: 3400, h: 2600, propCount: 62, floor: '#171c13', accent: '#5a7a4a' },
     'Bloc Tactique': { w: 2800, h: 2200, propCount: 48, floor: '#14151a', accent: '#4a6a8a' }
 };
+
+// Scales a map's base size/prop density by total player count (same tiering idea as classic mode):
+// fewer players -> smaller map (hunt stays findable), more players -> bigger map (more room to hide).
+function hunterMapSizeFor(theme, totalPlayers) {
+    const base = HUNTER_MAPS[theme] || HUNTER_MAPS['Depot Alpha'];
+    let scale;
+    if (totalPlayers <= 2) scale = 0.75;
+    else if (totalPlayers <= 4) scale = 1.0;
+    else scale = 1.3;
+    return {
+        w: Math.round(base.w * scale),
+        h: Math.round(base.h * scale),
+        propCount: Math.round(base.propCount * scale * scale) // density stays ~constant per unit area
+    };
+}
 
 // ──────────────────────────────────────────────
 // PRNG (déterministe, partagée client/serveur)
@@ -601,13 +648,14 @@ class HunterRoom {
 
     // ─── Socket bindings ────────────────────────
     _bindSocket(socket) {
-        socket.on('playerReady', (data) => {
+        safeOn(socket, 'playerReady', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
             const p = this.players[socket.id];
             if (!p || p.isReady) return;
+            const avatar = (data && typeof data.avatar === 'string') ? data.avatar.slice(0, 40) : 'Combat-Operative';
             p.isReady = true;
-            p.avatar  = data.avatar || 'Combat-Operative';
-            if (p.playerNum === 1 && data.theme && HUNTER_MAPS[data.theme]) {
+            p.avatar  = avatar || 'Combat-Operative';
+            if (p.playerNum === 1 && data && typeof data.theme === 'string' && HUNTER_MAPS[data.theme]) {
                 this.theme = data.theme;
             }
             this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
@@ -627,19 +675,20 @@ class HunterRoom {
             }
         });
 
-
-
-        socket.on('hunterInput', (input) => {
+        safeOn(socket, 'hunterInput', (input) => {
             const p = this.players[socket.id];
             if (!p || p.eliminated) return;
-            p.input = input;
+            p.input = sanitizeMovementInput(input);
         });
 
-        socket.on('hunterDisguise', (data) => {
+        safeOn(socket, 'hunterDisguise', (data) => {
+            if (isRateLimited(socket, 'hunterDisguise', 200)) return;
+            if (!data || typeof data.propId !== 'string') return;
             this.handleDisguise(socket.id, data.propId);
         });
 
-        socket.on('hunterRotateDisguise', () => {
+        safeOn(socket, 'hunterRotateDisguise', () => {
+            if (isRateLimited(socket, 'hunterRotateDisguise', 150)) return;
             const p = this.players[socket.id];
             if (!p || p.eliminated) return;
 
@@ -662,25 +711,30 @@ class HunterRoom {
             }
         });
 
-        socket.on('hunterTag', (data) => {
+        safeOn(socket, 'hunterTag', (data) => {
+            if (isRateLimited(socket, 'hunterTag', 80)) return;
+            if (!data || !Number.isFinite(data.x) || !Number.isFinite(data.y)) return;
             this.handleHunterTag(socket.id, data.x, data.y);
         });
 
         // Powerups chasseur
-        socket.on('hunterUseDrone', () => {
+        safeOn(socket, 'hunterUseDrone', () => {
+            if (isRateLimited(socket, 'hunterUseDrone', 300)) return;
             this._handleDroneRecon(socket.id);
         });
 
         // Powerups fantôme
-        socket.on('ghostUseSmoke', () => {
+        safeOn(socket, 'ghostUseSmoke', () => {
+            if (isRateLimited(socket, 'ghostUseSmoke', 300)) return;
             this._handleSmokeScreen(socket.id);
         });
 
-        socket.on('ghostUseSprint', () => {
+        safeOn(socket, 'ghostUseSprint', () => {
+            if (isRateLimited(socket, 'ghostUseSprint', 300)) return;
             this._handleSprint(socket.id);
         });
 
-        socket.on('backToLobby', () => {
+        safeOn(socket, 'backToLobby', () => {
             if (this.state === 'GAME_OVER') this.resetToLobby();
         });
     }
@@ -710,13 +764,13 @@ class HunterRoom {
         this.state            = 'COUNTDOWN';
         this.countdownSeconds = this.MAX_COUNTDOWN;
         this.broadcastCountdown();
-        this.countdownTimer = setInterval(() => {
+        this.countdownTimer = setInterval(safeTick('countdownTimer', () => {
             this.countdownSeconds--;
             if (this.countdownSeconds <= 0) {
                 this.stopCountdown();
                 if (Object.keys(this.players).length < this.MAX_PLAYERS) {
                     this.state = 'LOBBY';
-                    this.io.to(this.roomId).emit('errorMsg', 'Hunter mode nécessite 4 joueurs humains.');
+                    this.io.to(this.roomId).emit('errorMsg', `Hunter mode nécessite ${this.MAX_PLAYERS} joueurs humains.`);
                     this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
                     return;
                 }
@@ -724,7 +778,7 @@ class HunterRoom {
                 return;
             }
             this.broadcastCountdown();
-        }, 1000);
+        }), 1000);
     }
 
     stopCountdown() {
@@ -736,36 +790,7 @@ class HunterRoom {
     }
 
     broadcastCountdown() {
-        const humans = Object.values(this.players).filter(p => !p.isBot);
-        const realCount = humans.length;
-
-        let fakeCount = 0;
-        if (this.isQuickMatch && realCount === 1 && this.countdownSeconds <= 5 && this.countdownSeconds > 0) {
-            fakeCount = Math.min(this.MAX_PLAYERS - realCount, 6 - this.countdownSeconds);
-        }
-
-        const slots = Array.from({ length: this.MAX_PLAYERS }, (_, i) => {
-            if (i < realCount) {
-                const p = humans[i];
-                return { type: 'player', ready: p.isReady, num: p.playerNum };
-            }
-            if (this.isQuickMatch && i < realCount + fakeCount) {
-                return { type: 'player', ready: true, num: i + 1 };
-            }
-            if (this.isQuickMatch) return { type: 'searching' };
-            return { type: 'empty' };
-        });
-
-        this.io.to(this.roomId).emit('lobbyCountdown', {
-            seconds: this.isQuickMatch ? this.countdownSeconds : null,
-            total: this.MAX_COUNTDOWN,
-            slots,
-            readyCount: humans.filter(p => p.isReady).length + fakeCount,
-            playerCount: realCount + fakeCount,
-            hostId: this.hostId,
-            isQuickMatch: this.isQuickMatch,
-            state: this.state
-        });
+        broadcastCountdownShared(this, { state: this.state });
     }
 
     // ─── Game Shuffle & Start ────────────────────
@@ -783,20 +808,28 @@ class HunterRoom {
         const themes = ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique'];
         this.theme = themes[Math.floor(Math.random() * themes.length)];
 
-        // Choose random end-game mode
-        const modes = ['STORM', 'FREEZE', 'PURGE'];
-        this.endGameMode = modes[Math.floor(Math.random() * modes.length)];
+        // PropHunt has no storm — the HUNT timer expiry alone decides the winner.
+
+        // Assign hunter role now so we can reveal it in the shuffle animation.
+        // Bots aren't added until startGame(), so all current players are human.
+        const humanIds = Object.keys(this.players);
+        this.hunterId = humanIds[Math.floor(Math.random() * humanIds.length)];
 
         // Shuffling duration (shorter for tests)
-        const isTest = (this.roomId === 'HUNTER' || this.roomId.toLowerCase().includes('test'));
+        const isTest = this.roomId.toLowerCase().includes('test');
         const duration = isTest ? 500 : 3000;
 
-        // Emit shuffle command to all clients
-        this.io.to(this.roomId).emit('hunterRoomShuffle', {
-            map: this.theme,
-            mode: this.endGameMode,
-            duration: duration
-        });
+        // Emit shuffle individually so each player sees their own role
+        for (const id of humanIds) {
+            const p = this.players[id];
+            if (p && p.socket) {
+                p.socket.emit('hunterRoomShuffle', {
+                    map: this.theme,
+                    role: id === this.hunterId ? 'hunter' : 'prop',
+                    duration
+                });
+            }
+        }
 
         // Set timeout to start the game after the shuffling animation + drama delay
         const serverDelay = isTest ? 500 : (duration + 1500);
@@ -806,36 +839,8 @@ class HunterRoom {
     }
 
     startGame() {
-        const mapDef     = HUNTER_MAPS[this.theme] || HUNTER_MAPS['Depot Alpha'];
-        this.mapSize     = { w: mapDef.w, h: mapDef.h };
-        this.seed        = Math.floor(Math.random() * 0xFFFFFF);
-        const genResult  = generateProps(this.mapSize, mapDef.propCount, this.theme, this.seed);
-        this.props       = genResult.props;
-        this.hunterHealth = HUNTER_HEALTH_MAX;
-        this.state       = 'PLAYING';
-        
-        this.doors = [];
-        this.teleporters = [];
-        this.smokes = [];
-        this.droneRevealEndsAt = 0;
-        this.hunterPowers = { droneUsed: false };
-
-        this.endGameMode = this.endGameMode || 'STORM';
-        this.endGameTriggered = false;
-        this.endGameCountdownRemaining = 30000;
-        this.stormRadius = 2500;
-        this.lastBotPurgeTime = 0;
-
-        if (this.theme === 'Depot Alpha') {
-            this.doors = genResult.doors;
-        } else if (this.theme === 'Bloc Tactique') {
-            this.teleporters = [
-                { id: 'teleport_A', x: 500, y: 500, targetX: 2300, targetY: 1700 },
-                { id: 'teleport_B', x: 2300, y: 1700, targetX: 500, targetY: 500 }
-            ];
-        }
-
-        // Fill with bots up to MAX_PLAYERS (4) if needed (Quick Match or Solo Test only)
+        // Fill with bots up to MAX_PLAYERS (Quick Match or Solo Test only) BEFORE sizing the map,
+        // so map size scales with the final player count — same approach as classic mode.
         const currentHumanIds = Object.keys(this.players);
         const shouldFillBots = this.isQuickMatch || (currentHumanIds.length === 1);
         if (shouldFillBots && currentHumanIds.length < this.MAX_PLAYERS) {
@@ -881,10 +886,37 @@ class HunterRoom {
             }
         }
 
-        // Assignation aléatoire chasseur
-        const ids         = Object.keys(this.players);
-        const hunterIndex = Math.floor(Math.random() * ids.length);
-        this.hunterId     = ids[hunterIndex];
+        const mapDef     = hunterMapSizeFor(this.theme, Object.keys(this.players).length);
+        this.mapSize     = { w: mapDef.w, h: mapDef.h };
+        this.seed        = Math.floor(Math.random() * 0xFFFFFF);
+        const genResult  = generateProps(this.mapSize, mapDef.propCount, this.theme, this.seed);
+        this.props       = genResult.props;
+        this.hunterHealth = HUNTER_HEALTH_MAX;
+        this.state       = 'PLAYING';
+
+        this.doors = [];
+        this.teleporters = [];
+        this.smokes = [];
+        this.droneRevealEndsAt = 0;
+        this.hunterPowers = { droneUsed: false };
+
+
+        if (this.theme === 'Depot Alpha') {
+            this.doors = genResult.doors;
+        } else if (this.theme === 'Bloc Tactique') {
+            // Relative to mapSize so the teleporter pair stays well-placed at any scale.
+            this.teleporters = [
+                { id: 'teleport_A', x: this.mapSize.w * 0.18, y: this.mapSize.h * 0.23, targetX: this.mapSize.w * 0.82, targetY: this.mapSize.h * 0.77 },
+                { id: 'teleport_B', x: this.mapSize.w * 0.82, y: this.mapSize.h * 0.77, targetX: this.mapSize.w * 0.18, targetY: this.mapSize.h * 0.23 }
+            ];
+        }
+
+        // Chasseur déjà assigné pendant le shuffle (avant ajout des bots) — on garde ce choix.
+        // Si pour une raison quelconque il n'est pas défini, on en choisit un aléatoirement.
+        const ids = Object.keys(this.players);
+        if (!this.hunterId || !this.players[this.hunterId]) {
+            this.hunterId = ids[Math.floor(Math.random() * ids.length)];
+        }
 
         const spawns = this._spawnPoints(ids.length);
         ids.forEach((id, i) => {
@@ -900,6 +932,7 @@ class HunterRoom {
             p.sprintActive = false;
             p.sprintEndsAt = 0;
             p.teleportReadyAt = 0;
+            p.noiseTimer   = NOISE_START_INTERVAL;
             p.role         = (id === this.hunterId) ? 'hunter' : 'prop';
             
             // Find a clear spawn position (not on top of props, players, or vault interior)
@@ -987,13 +1020,14 @@ class HunterRoom {
             phase:        this.phase,
             phaseEndsAt:  this.phaseEndsAt,
             remaining:    PHASE_DURATIONS[this.phase],
-            hunterHealth: this.hunterHealth
+            hunterHealth: this.hunterHealth,
+            teleporters:  this.teleporters
         });
 
         this.lastTime     = Date.now();
         this.netTickTimer = 0;
         if (this.interval) clearInterval(this.interval);
-        this.interval = setInterval(() => this.gameLoop(), 1000 / FPS);
+        this.interval = setInterval(safeTick('gameLoop', () => this.gameLoop()), 1000 / FPS);
     }
 
     _spawnPoints(n) {
@@ -1341,78 +1375,37 @@ class HunterRoom {
             this._updateMovement(p);
         }
 
-        // Handle endgame countdown and triggering during HUNT phase
+        // Props periodically give away a noise — interval shrinks as HUNT progresses.
+        // Only the hunter hears it, as a proximity-scaled volume (no position is sent).
         if (this.phase === 'HUNT') {
-            if (!this.endGameTriggered) {
-                this.endGameCountdownRemaining = Math.max(0, this.endGameCountdownRemaining - dt);
-                if (this.endGameCountdownRemaining <= 0) {
-                    this.endGameTriggered = true;
-                    this.io.to(this.roomId).emit('hunterEndGameModeTriggered', { mode: this.endGameMode });
-                    if (this.endGameMode === 'PURGE') {
-                        this.lastBotPurgeTime = now;
-                    }
-                }
-            } else {
-                // Apply active endgame mode ticks
-                if (this.endGameMode === 'STORM') {
-                    // Shrink storm radius
-                    this.stormRadius = Math.max(0, this.stormRadius - 28 * (dt / 1000));
-                    
-                    // Center of the map
-                    const cx = this.mapSize.w / 2;
-                    const cy = this.mapSize.h / 2;
-                    
-                    for (const [id, pl] of Object.entries(this.players)) {
-                        if (pl.role === 'prop' && !pl.eliminated) {
-                            const dx = pl.x - cx;
-                            const dy = pl.y - cy;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > this.stormRadius) {
-                                pl.timeOutsideStorm = (pl.timeOutsideStorm || 0) + dt;
-                                if (pl.timeOutsideStorm >= 1000) {
-                                    pl.timeOutsideStorm = 0;
-                                    pl.lives--;
-                                    this.io.to(this.roomId).emit('hunterLivesUpdated', { id, lives: pl.lives });
-                                    if (pl.lives <= 0) {
-                                        pl.eliminated = true;
-                                        pl.disguised = false;
-                                        this.io.to(this.roomId).emit('hunterEliminated', { id });
-                                        
-                                        // Check if any props remain
-                                        const propsAlive = Object.values(this.players).filter(k => k.role === 'prop' && !k.eliminated);
-                                        if (propsAlive.length === 0) {
-                                            this.endGame('hunter');
-                                            return;
-                                        }
-                                    }
-                                }
-                            } else {
-                                pl.timeOutsideStorm = 0;
-                            }
-                        }
-                    }
-                } else if (this.endGameMode === 'PURGE') {
-                    if (now - this.lastBotPurgeTime >= 5000) {
-                        this.lastBotPurgeTime = now;
-                        const botProps = Object.entries(this.players).filter(([id, pl]) => pl.isBot && pl.role === 'prop' && !pl.eliminated);
-                        if (botProps.length > 0) {
-                            const [purgeId, purgeBot] = botProps[Math.floor(Math.random() * botProps.length)];
-                            purgeBot.eliminated = true;
-                            purgeBot.disguised = false;
-                            purgeBot.lives = 0;
-                            this.io.to(this.roomId).emit('hunterLivesUpdated', { id: purgeId, lives: 0 });
-                            this.io.to(this.roomId).emit('hunterEliminated', { id: purgeId });
-                            
-                            const propsAlive = Object.values(this.players).filter(pl => pl.role === 'prop' && !pl.eliminated);
-                            if (propsAlive.length === 0) {
-                                this.endGame('hunter');
-                                return;
-                            }
-                        }
+            const huntElapsed = PHASE_DURATIONS.HUNT - Math.max(0, this.phaseEndsAt - now);
+            const noiseInterval = Math.max(
+                NOISE_MIN_INTERVAL,
+                NOISE_START_INTERVAL - (NOISE_START_INTERVAL - NOISE_MIN_INTERVAL) * (huntElapsed / PHASE_DURATIONS.HUNT)
+            );
+            const hunterP = this.players[this.hunterId];
+
+            for (const [id, p] of Object.entries(this.players)) {
+                if (p.role !== 'prop' || p.eliminated) continue;
+                if (p.noiseTimer === undefined) p.noiseTimer = NOISE_START_INTERVAL;
+                p.noiseTimer -= dt;
+                if (p.noiseTimer > 0) continue;
+                p.noiseTimer = noiseInterval;
+
+                if (p.socket) p.socket.emit('youMadeNoise');
+
+                if (hunterP) {
+                    const dx = p.x - hunterP.x;
+                    const dy = p.y - hunterP.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist <= NOISE_HEAR_RADIUS && hunterP.socket) {
+                        const volume = Math.pow(Math.max(0, 1 - dist / NOISE_HEAR_RADIUS), 1.5);
+                        hunterP.socket.emit('hunterNoiseHeard', { volume: Math.round(volume * 100) / 100 });
                     }
                 }
             }
         }
+
 
         this.netTickTimer += dt;
         if (this.netTickTimer >= NET_TICK_MS) {
@@ -1425,11 +1418,7 @@ class HunterRoom {
                 hunterHealth: this.hunterHealth,
                 doors:        this.doors.map(d => ({ id: d.id, x: d.x, y: d.y, w: d.w, h: d.h, consoleX: d.consoleX, consoleY: d.consoleY, open: d.open })),
                 smokes:       this.smokes.map(s => ({ x: s.x, y: s.y, radius: s.radius, remaining: Math.max(0, s.endsAt - now) })),
-                droneZone:    (this.droneRevealEndsAt && now < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null,
-                endGameMode:  this.endGameMode,
-                endGameTriggered: this.endGameTriggered,
-                endGameCountdownRemaining: this.endGameCountdownRemaining,
-                stormRadius:  this.stormRadius
+                droneZone:    (this.droneRevealEndsAt && now < this.droneRevealEndsAt) ? { x: this.droneRevealX, y: this.droneRevealY, radius: this.droneRevealRadius } : null
             });
         }
     }
@@ -1439,13 +1428,6 @@ class HunterRoom {
             p.input = { up: false, down: false, left: false, right: false };
             return;
         }
-        if (this.endGameTriggered && this.endGameMode === 'FREEZE') {
-            p.input = { up: false, down: false, left: false, right: false };
-            p.vx = 0;
-            p.vy = 0;
-            return;
-        }
-
         p.aiTagCooldown = Math.max(0, p.aiTagCooldown - dt);
         p.aiPowerupCooldown = Math.max(0, p.aiPowerupCooldown - dt);
         p.aiInspectTimer = Math.max(0, p.aiInspectTimer - dt);
@@ -1990,59 +1972,21 @@ class HunterRoom {
 
         const wasInGame = this.state === 'PLAYING';
 
-        // Host migration
-        if (socketId === this.hostId) {
-            const next = Object.entries(this.players)
-                .filter(([id, pl]) => !pl.isBot && id !== socketId)
-                .sort(([, a], [, b]) => a.playerNum - b.playerNum)[0];
-            if (next) {
-                this.hostId = next[0];
-                this.io.to(this.roomId).emit('hostMigrated', { newHostId: this.hostId });
-            }
-        }
+        migrateHostOnDisconnect(this, socketId);
 
         // Grace period during game for human players
         if (wasInGame && !p.isBot && p.sessionToken) {
-            const token = p.sessionToken;
-            p.disconnected = true;
-            p.socket = null;
             p.input = { up: false, down: false, left: false, right: false };
-
-            pendingRejoin[token] = {
-                room: this,
-                socketId,
-                isHunter: true,
-                timer: setTimeout(() => {
-                    delete pendingRejoin[token];
-                    this._permanentRemove(socketId);
-                }, 15000)
-            };
-
-            this.io.to(this.roomId).emit('playerDisconnected', { socketId, graceSecs: 15 });
+            startGracePeriod(this, socketId, p, true);
             return;
         }
 
         delete this.players[socketId];
         this._checkAfterRemoval(socketId, wasInGame);
-    }
-
-    _permanentRemove(socketId) {
-        const p = this.players[socketId];
-        if (!p) return;
-        const wasInGame = this.state === 'PLAYING';
-        delete this.players[socketId];
-        this._checkAfterRemoval(socketId, wasInGame);
-        this.io.to(this.roomId).emit('playerLeft', { socketId });
     }
 
     _checkAfterRemoval(socketId, wasInGame) {
-        const humansLeft = Object.values(this.players).filter(p => !p.isBot).length;
-        if (humansLeft === 0) {
-            this.stopCountdown();
-            if (this.interval) clearInterval(this.interval);
-            delete this.roomsRef[this.roomId];
-            return;
-        }
+        if (cleanupRoomIfEmpty(this)) return;
 
         if (wasInGame) {
             if (socketId === this.hunterId) {
@@ -2058,19 +2002,18 @@ class HunterRoom {
     }
 
     rejoinPlayer(newSocket, oldSocketId) {
-        const p = this.players[oldSocketId];
-        if (!p) { newSocket.emit('rejoinFailed'); return; }
+        const p = beginRejoin(this, newSocket, oldSocketId);
+        if (!p) return;
+        if (this.hunterId === oldSocketId) this.hunterId = newSocket.id;
 
-        const token = generateSessionToken();
-        this.players[newSocket.id] = { ...p, socket: newSocket, disconnected: false, sessionToken: token };
-        delete this.players[oldSocketId];
+        resumeLoopIfPaused(this, FPS);
 
         newSocket.join(this.roomId);
         this._bindSocket(newSocket);
 
         newSocket.emit('rejoinSuccess', {
             mode: 'hunter',
-            sessionToken: token,
+            sessionToken: this.players[newSocket.id].sessionToken,
             roomCode: this.roomId,
             isHunter: true,
             role: p.role,
@@ -2082,11 +2025,12 @@ class HunterRoom {
             mapSize: this.mapSize,
             props: this.props,
             seed: this.seed,
-            roles: this._getRolesPayload()
+            roles: this._getRolesPayload(),
+            teleporters: this.teleporters
         });
 
         this.io.to(this.roomId).emit('playerRejoined', { socketId: newSocket.id, oldSocketId });
     }
 }
 
-module.exports = { HunterRoom, HUNTER_MAPS, BIOME_POOLS, pendingRejoin };
+module.exports = { HunterRoom, HUNTER_MAPS, BIOME_POOLS };

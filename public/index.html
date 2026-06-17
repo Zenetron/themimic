@@ -1733,6 +1733,14 @@
         </div>
     </div>
 
+    <!-- Prop noise alert -->
+    <div id="propNoiseAlert" style="display:none; position:fixed; bottom:120px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; text-align:center;">
+        <div style="background:rgba(255,80,0,0.18); border:2px solid rgba(255,120,0,0.7); border-radius:8px; padding:10px 28px; backdrop-filter:blur(4px);">
+            <div style="font-family:'Share Tech Mono',monospace; font-size:1.25em; color:#ff8800; text-shadow:0 0 10px #ff6600; letter-spacing:3px;">🔊 BRUIT ÉMIS</div>
+            <div id="propNoiseAlertSub" style="font-family:'Share Tech Mono',monospace; font-size:0.7em; color:rgba(255,150,50,0.8); letter-spacing:2px; margin-top:3px;">LE CHASSEUR PEUT VOUS ENTENDRE</div>
+        </div>
+    </div>
+
     <!-- Hunter Mode Overlays -->
     <div class="full-overlay hidden" id="hunterHUD_standbyOverlay">
         <div class="standby-title">STANDBY</div>
@@ -1950,7 +1958,6 @@
             <button class="btn-primary" id="btnReady">▶ READY</button>
             <br>
             <button id="btnSoloTest" style="font-size:0.72em;opacity:0.5;margin-top:4px;padding:8px 16px;">⬡ SOLO TEST</button>
-            <button id="btnHunterMode" style="display:none;font-size:0.72em;opacity:0.5;margin-top:4px;padding:8px 16px;background:#ff4444;">🎯 HUNTER MODE</button>
             <button id="btnLobbyLeave" style="font-size:0.72em;opacity:0.65;margin-top:4px;padding:8px 16px;">✕ LEAVE ROOM</button>
         </div>
 
@@ -2333,7 +2340,6 @@
                 `;
                 selectedMap = select.value;
                 document.getElementById('btnSoloTest').style.display = 'none';
-                document.getElementById('btnHunterMode').style.display = 'none';
                 console.log('[updateLobbyThemeOptions] isHost:', isHost, 'roomType:', roomType);
                 if (isHost) {
                     document.getElementById('btnStartNow').style.display = 'inline-block';
@@ -2345,7 +2351,6 @@
                     <option value="Command Center">${isEng ? '📡 COMMAND CENTER — Radar Sweep' : '📡 CENTRE DE COMMANDE — Balayage Radar'}</option>
                 `;
                 document.getElementById('btnSoloTest').style.display = 'inline-block';
-                document.getElementById('btnHunterMode').style.display = 'none';
                 if (isHost) {
                     document.getElementById('btnStartNow').style.display = 'inline-block';
                 }
@@ -2535,6 +2540,13 @@
             [523, 659, 784, 1047, 1319].forEach((f, i) => {
                 setTimeout(() => sfxBeep(f, 0.2, 'sine', 0.3), i * 90);
             });
+        }
+
+        // Hunter-only cue: a prop just gave away a noise. Louder/closer = higher volume (0-1).
+        function sfxPropNoise(volume) {
+            const v = Math.max(0.05, Math.min(1, volume));
+            sfxBeep(190, 0.35, 'sine', v * 0.5);
+            setTimeout(() => sfxBeep(150, 0.45, 'sine', v * 0.35), 100);
         }
 
         function sfxLose() {
@@ -2922,16 +2934,58 @@
             if (data.mode === 'hunter') {
                 roomType = 'hunter';
                 myRole = data.role;
+                G.state = 'PLAYING';
                 G.phase = data.phase;
                 G.mapSize = data.mapSize;
                 G.theme = data.theme;
                 G.hunterHealth = data.hunterHealth;
+                G.props = data.props || [];
+                G.teleporters = data.teleporters || [];
+                G.phaseEndsAt = Date.now() + (data.remaining || 0);
+                G.cam = { x: 0, y: 0, scale: 1 };
                 hunterId = data.hunterId;
+
+                G.players = {};
+                const ghostIds = Object.entries(data.roles || {}).filter(([, v]) => v.role === 'prop').map(([id]) => id);
+                for (const [id, role] of Object.entries(data.roles || {})) {
+                    G.players[id] = {
+                        role: role.role,
+                        lives: role.role === 'prop' ? 3 : 1,
+                        eliminated: false,
+                        num: role.num,
+                        avatar: role.avatar,
+                        x: role.x,
+                        y: role.y,
+                        angle: 0
+                    };
+                }
+
+                const badge = document.getElementById('hunterHUD_roleBadge');
+                if (badge) {
+                    const isEng = (currentLang === 'en');
+                    if (myRole === 'hunter') {
+                        badge.textContent = isEng ? '🔴 OPERATIVE' : '🔴 OPÉRATEUR';
+                        badge.className = 'role-badge role-hunter';
+                    } else {
+                        badge.textContent = isEng ? '👻 GHOST' : '👻 FANTÔME';
+                        badge.className = 'role-badge role-ghost';
+                    }
+                }
+
+                buildGhostIndicators(ghostIds);
+                buildPowerupsHUD();
+                applyPhaseOverlays(data.phase, G.phaseEndsAt);
+                updateHealthHUD();
+                updateCtrlHints();
+                updateTimerHUD();
+
                 lobbyMenu.classList.add('hidden');
                 const hHUD = document.getElementById('hunterHUD');
                 if (hHUD) hHUD.classList.remove('hidden');
                 const notif = (currentLang === 'en') ? 'Reconnected!' : 'Reconnecté !';
                 showNotif(notif, 'success');
+                startMusic();
+                requestAnimationFrame(renderLoop);
             } else {
                 // mimic mode
                 theme = data.theme;
@@ -2939,12 +2993,21 @@
                 MAP_SIZE = data.mapSize;
                 decorations = data.decorations || [];
                 initEnvironment();
+                playersInfo = data.playersInfo || {};
+                if (playersInfo[localPlayerId]) {
+                    previousLives = playersInfo[localPlayerId].lives;
+                    updateLivesGraphically(previousLives);
+                }
+                clientLastTime = performance.now();
                 lobbyMenu.classList.add('hidden');
                 hud.style.display = 'block';
                 minimapEl.style.display = 'block';
                 playerCounterEl.style.display = 'block';
+                document.getElementById('spectatorOverlay').classList.add('hidden');
                 const notif = (currentLang === 'en') ? 'Reconnected!' : 'Reconnecté !';
                 showNotif(notif, 'success');
+                startMusic();
+                requestAnimationFrame(renderLoop);
             }
         });
 
@@ -3423,33 +3486,8 @@
             const s    = sec % 60;
             const timerEl = document.getElementById('hunterHUD_timerDisplay');
             if (timerEl) {
-                let timeStr = String(min).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-                if (G.phase === 'HUNT') {
-                    const endgameSec = Math.ceil((G.endGameCountdownRemaining || 0) / 1000);
-                    if (G.endGameTriggered) {
-                        if (G.endGameMode === 'STORM') {
-                            timeStr = (currentLang === 'en') ? 'STORM ACTIVE!' : 'TEMPÊTE ACTIVE !';
-                        } else if (G.endGameMode === 'FREEZE') {
-                            timeStr = (currentLang === 'en') ? 'BOTS FROZEN!' : 'BOTS FIGÉS !';
-                        } else if (G.endGameMode === 'PURGE') {
-                            timeStr = (currentLang === 'en') ? 'PURGE ACTIVE!' : 'PURGE ACTIVE !';
-                        }
-                    } else if (endgameSec > 0) {
-                        if (G.endGameMode === 'STORM') {
-                            timeStr = ((currentLang === 'en') ? 'STORM IN: ' : 'ZONE DANS : ') + endgameSec + 's';
-                        } else if (G.endGameMode === 'FREEZE') {
-                            timeStr = ((currentLang === 'en') ? 'FREEZE IN: ' : 'GEL DANS : ') + endgameSec + 's';
-                        } else if (G.endGameMode === 'PURGE') {
-                            timeStr = ((currentLang === 'en') ? 'PURGE IN: ' : 'PURGE DANS : ') + endgameSec + 's';
-                        }
-                    }
-                }
-                
-                if (timeStr.length > 5) {
-                    timerEl.style.fontSize = '18px';
-                } else {
-                    timerEl.style.fontSize = '32px';
-                }
+                const timeStr = String(min).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+                timerEl.style.fontSize = '32px';
                 
                 timerEl.textContent = timeStr;
                 timerEl.className = 'hud-timer' + (remaining < 30000 && G.phase === 'HUNT' ? ' urgent' : '');
@@ -3469,7 +3507,7 @@
             }
         }
 
-        function runShuffleAnimation(data, mapList) {
+        function runShuffleAnimation(data, mapList, mapOnly, config) {
             const overlay    = document.getElementById('shuffleOverlay');
             if (!overlay) return;
             overlay.classList.remove('hidden');
@@ -3481,6 +3519,12 @@
             const headerId   = document.getElementById('shuffleHeaderId');
             const isFr       = (currentLang !== 'en');
 
+            // Show/hide mode column and divider depending on mapOnly flag
+            const slotDivider = document.querySelector('#shuffleOverlay .slot-divider');
+            const modeColEl   = document.getElementById('slotModeBox') ? document.getElementById('slotModeBox').closest('.slot-column') : null;
+            if (modeColEl)   modeColEl.style.display   = mapOnly ? 'none' : '';
+            if (slotDivider) slotDivider.style.display = mapOnly ? 'none' : '';
+
             // Set all UI text based on current language
             const titleEl    = document.getElementById('shuffleTitle');
             const subtitleEl = document.getElementById('shuffleSubtitle');
@@ -3490,7 +3534,7 @@
             if (titleEl)     titleEl.textContent    = isFr ? 'AFFECTATION ALÉATOIRE' : 'RANDOM ASSIGNMENT';
             if (subtitleEl)  subtitleEl.textContent = isFr ? '// PARAMÈTRES DE MISSION EN COURS //' : '// RANDOMIZING MISSION PARAMETERS //';
             if (labelMapEl)  labelMapEl.textContent  = isFr ? '◈ THÉÂTRE D\'OPS ◈' : '◈ THEATRE OF OPS ◈';
-            if (labelModeEl) labelModeEl.textContent = isFr ? '◈ OBJECTIF FINAL ◈' : '◈ FINAL OBJECTIVE ◈';
+            if (labelModeEl) labelModeEl.textContent = (config && config.secondSlotLabel) || (isFr ? '◈ OBJECTIF FINAL ◈' : '◈ FINAL OBJECTIVE ◈');
             if (footerEl)    footerEl.textContent    = isFr
                 ? 'CLASSIFIÉ — PROTOCOLE MIMIC OPS — NE PAS DIVULGUER'
                 : 'CLASSIFIED — MIMIC OPS PROTOCOL — DO NOT DISCLOSE';
@@ -3500,7 +3544,7 @@
             if (headerId) headerId.textContent = refId;
 
             const maps  = mapList || ['Military Base', 'Forest', 'Arcade Grid'];
-            const modes = ['STORM', 'FREEZE', 'PURGE', 'TEMPETE', 'GEL', 'DISPARITION'];
+            const modes = (config && config.roleItems) || ['STORM', 'FREEZE', 'PURGE', 'TEMPETE', 'GEL', 'DISPARITION'];
 
             mapReel.innerHTML  = '';
             modeReel.innerHTML = '';
@@ -3520,7 +3564,7 @@
             const targetMapIndex  = repeats - 2;
             const targetModeIndex = repeats - 1;
             mapReel.children[targetMapIndex].textContent  = data.map;
-            modeReel.children[targetModeIndex].textContent = data.mode;
+            if (!mapOnly) modeReel.children[targetModeIndex].textContent = data.mode;
 
             // Reset reels
             mapReel.style.transition  = 'none';
@@ -3538,9 +3582,11 @@
                     const ITEM_H   = 88;
 
                     mapReel.style.transition  = `transform ${duration - 500}ms cubic-bezier(0.05, 0.9, 0.1, 1.0)`;
-                    modeReel.style.transition = `transform ${duration}ms cubic-bezier(0.05, 0.9, 0.1, 1.0)`;
+                    if (!mapOnly) {
+                        modeReel.style.transition = `transform ${duration}ms cubic-bezier(0.05, 0.9, 0.1, 1.0)`;
+                        modeReel.style.transform  = `translateY(${-targetModeIndex * ITEM_H}px)`;
+                    }
                     mapReel.style.transform   = `translateY(${-targetMapIndex  * ITEM_H}px)`;
-                    modeReel.style.transform  = `translateY(${-targetModeIndex * ITEM_H}px)`;
 
                     // Progress bar
                     if (progressBar) {
@@ -3567,89 +3613,76 @@
                 setTimeout(() => sfxBeep(880, 0.14, 'sine', 0.25), 240);
                 if (statusText) {
                     const lockedLabel = isFr ? 'VERROUILLÉ' : 'LOCKED';
-                    statusText.textContent = `◈ ${lockedLabel} — ${data.map.toUpperCase()} / ${data.mode} ◈`;
+                    statusText.textContent = mapOnly
+                        ? `◈ ${lockedLabel} — ${data.map.toUpperCase()} ◈`
+                        : `◈ ${lockedLabel} — ${data.map.toUpperCase()} / ${data.mode} ◈`;
                     statusText.className = 'shuffle-status locked';
                 }
                 // Flash selected items green
                 const mapTarget  = mapReel.children[targetMapIndex];
-                const modeTarget = modeReel.children[targetModeIndex];
                 if (mapTarget)  mapTarget.style.color  = 'var(--gold)';
-                if (modeTarget) modeTarget.style.color = 'var(--gold)';
+                if (!mapOnly) {
+                    const modeTarget = modeReel.children[targetModeIndex];
+                    if (modeTarget) modeTarget.style.color = 'var(--gold)';
+                }
             }, (data.duration || 3500) - 300);
 
             setTimeout(() => { overlay.classList.add('hidden'); }, (data.duration || 3500) + 900);
         }
 
         socket.on('hunterRoomShuffle', (data) => {
-            runShuffleAnimation(data, ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique']);
+            const isFr = (currentLang !== 'en');
+            const hunterLabel = isFr ? 'CHASSEUR' : 'HUNTER';
+            const propLabel   = isFr ? 'CACHÉ' : 'HIDDEN';
+            const roleLabel   = data.role === 'hunter' ? hunterLabel : propLabel;
+            const roleItems   = [hunterLabel, propLabel, hunterLabel, propLabel, hunterLabel, propLabel];
+            const secondLabel = isFr ? '◈ TON RÔLE ◈' : '◈ YOUR ROLE ◈';
+            runShuffleAnimation(
+                { ...data, mode: roleLabel },
+                ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique'],
+                false,
+                { roleItems, secondSlotLabel: secondLabel }
+            );
         });
 
         socket.on('roomShuffle', (data) => {
             runShuffleAnimation(data, data.maps || ['Military Base', 'Forest', 'Arcade Grid', 'Weapon Warehouse', 'Cave', 'Toy Factory', 'Command Center', 'Desert', 'Micro-Circuit']);
         });
 
-        socket.on('classicEndGameModeTriggered', (data) => {
+        function showEndGameBanner(mode, textTable) {
             const banner = document.getElementById('purgeBanner');
-            if (banner) {
-                const title = document.getElementById('purgeBannerTitle');
-                const subtitle = document.getElementById('purgeBannerSubtitle');
+            const entry = textTable[mode];
+            if (!banner || !entry) return;
 
-                if (data.mode === 'STORM') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ STORM ZONE CLOSING ⚠️' : '⚠️ RÉTRÉCISSEMENT DE LA ZONE ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SECURE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
-                } else if (data.mode === 'FREEZE') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️' : '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' : 'TOUS LES BOTS DECOYS SONT FIGÉS';
-                } else if (data.mode === 'PURGE') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ BOT PURGE PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE PURGE DES BOTS ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'TERMINATING BOT HOSTS EVERY 5 SECONDS' : 'ÉLIMINATION DES BOTS TOUTES LES 5 SECONDES';
-                } else if (data.mode === 'TEMPETE') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ TEMPEST ZONE CLOSING ⚠️' : '⚠️ TEMPÊTE — ZONE EN FERMETURE ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SAFE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
-                } else if (data.mode === 'GEL') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ CRYO-GEL ACTIVATED ⚠️' : '⚠️ CRYO-GEL ACTIVÉ ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOTS ARE FROZEN — FIND THE PLAYERS!' : 'TOUS LES BOTS SONT FIGÉS — TROUVEZ LES JOUEURS !';
-                } else if (data.mode === 'DISPARITION') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ VANISHING PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE DISPARITION ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'BOTS VANISHING EVERY 5 SECONDS' : 'LES BOTS DISPARAISSENT TOUTES LES 5 SECONDES';
-                }
+            const t = (currentLang === 'en') ? entry.en : entry.fr;
+            document.getElementById('purgeBannerTitle').textContent = t.title;
+            document.getElementById('purgeBannerSubtitle').textContent = t.subtitle;
 
-                banner.classList.remove('hidden');
-                sfxBeep(220, 0.2, 'sawtooth', 0.35);
-                setTimeout(() => sfxBeep(180, 0.4, 'sawtooth', 0.35), 250);
-                
-                setTimeout(() => {
-                    banner.classList.add('hidden');
-                }, 4000);
-            }
-        });
+            banner.classList.remove('hidden');
+            sfxBeep(220, 0.2, 'sawtooth', 0.35);
+            setTimeout(() => sfxBeep(180, 0.4, 'sawtooth', 0.35), 250);
 
-        socket.on('hunterEndGameModeTriggered', (data) => {
-            const banner = document.getElementById('purgeBanner');
-            if (banner) {
-                const title = document.getElementById('purgeBannerTitle');
-                const subtitle = document.getElementById('purgeBannerSubtitle');
-                
-                if (data.mode === 'STORM') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ STORM ZONE CLOSING ⚠️' : '⚠️ RÉTRÉCISSEMENT DE LA ZONE ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'STAY INSIDE THE SECURE CIRCLE' : 'RESTEZ DANS LE CERCLE SÉCURISÉ';
-                } else if (data.mode === 'FREEZE') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️' : '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' : 'TOUS LES BOTS SPECTRES SONT FIGÉS';
-                } else if (data.mode === 'PURGE') {
-                    title.textContent = (currentLang === 'en') ? '⚠️ BOT PURGE PROTOCOL ⚠️' : '⚠️ PROTOCOLE DE PURGE DES BOTS ⚠️';
-                    subtitle.textContent = (currentLang === 'en') ? 'TERMINATING BOT HOSTS EVERY 5 SECONDS' : 'ÉLIMINATION DES BOTS TOUTES LES 5 SECONDES';
-                }
-                
-                banner.classList.remove('hidden');
-                sfxBeep(220, 0.2, 'sawtooth', 0.35);
-                setTimeout(() => sfxBeep(180, 0.4, 'sawtooth', 0.35), 250);
-                
-                setTimeout(() => {
-                    banner.classList.add('hidden');
-                }, 4000);
-            }
-        });
+            setTimeout(() => {
+                banner.classList.add('hidden');
+            }, 4000);
+        }
+
+        const CLASSIC_ENDGAME_BANNER_TEXT = {
+            STORM:       { en: { title: '⚠️ STORM ZONE CLOSING ⚠️', subtitle: 'STAY INSIDE THE SECURE CIRCLE' }, fr: { title: '⚠️ RÉTRÉCISSEMENT DE LA ZONE ⚠️', subtitle: 'RESTEZ DANS LE CERCLE SÉCURISÉ' } },
+            FREEZE:      { en: { title: '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️', subtitle: 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' }, fr: { title: '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️', subtitle: 'TOUS LES BOTS DECOYS SONT FIGÉS' } },
+            PURGE:       { en: { title: '⚠️ BOT PURGE PROTOCOL ⚠️', subtitle: 'TERMINATING BOT HOSTS EVERY 5 SECONDS' }, fr: { title: '⚠️ PROTOCOLE DE PURGE DES BOTS ⚠️', subtitle: 'ÉLIMINATION DES BOTS TOUTES LES 5 SECONDES' } },
+            TEMPETE:     { en: { title: '⚠️ TEMPEST ZONE CLOSING ⚠️', subtitle: 'STAY INSIDE THE SAFE CIRCLE' }, fr: { title: '⚠️ TEMPÊTE — ZONE EN FERMETURE ⚠️', subtitle: 'RESTEZ DANS LE CERCLE SÉCURISÉ' } },
+            GEL:         { en: { title: '⚠️ CRYO-GEL ACTIVATED ⚠️', subtitle: 'ALL BOTS ARE FROZEN — FIND THE PLAYERS!' }, fr: { title: '⚠️ CRYO-GEL ACTIVÉ ⚠️', subtitle: 'TOUS LES BOTS SONT FIGÉS — TROUVEZ LES JOUEURS !' } },
+            DISPARITION: { en: { title: '⚠️ VANISHING PROTOCOL ⚠️', subtitle: 'BOTS VANISHING EVERY 5 SECONDS' }, fr: { title: '⚠️ PROTOCOLE DE DISPARITION ⚠️', subtitle: 'LES BOTS DISPARAISSENT TOUTES LES 5 SECONDES' } }
+        };
+
+        const HUNTER_ENDGAME_BANNER_TEXT = {
+            STORM:  CLASSIC_ENDGAME_BANNER_TEXT.STORM,
+            FREEZE: { en: { title: '⚠️ COGNITIVE FREEZE ACTIVATED ⚠️', subtitle: 'ALL BOT SPECTRES HAVE FROZEN IN PLACE' }, fr: { title: '⚠️ CONGÉLATION COGNITIVE ACTIVÉE ⚠️', subtitle: 'TOUS LES BOTS SPECTRES SONT FIGÉS' } },
+            PURGE:  CLASSIC_ENDGAME_BANNER_TEXT.PURGE
+        };
+
+        socket.on('classicEndGameModeTriggered', (data) => showEndGameBanner(data.mode, CLASSIC_ENDGAME_BANNER_TEXT));
 
         socket.on('hunterGameStart', (data) => {
             localPlayerId = socket.id;
@@ -3679,6 +3712,7 @@
             G.phase = data.phase;
             G.phaseEndsAt = Date.now() + (data.remaining !== undefined ? data.remaining : (data.phaseEndsAt ? data.phaseEndsAt - Date.now() : 0));
             G.hunterHealth = data.hunterHealth;
+            G.teleporters = data.teleporters || [];
             G.players = {};
             G.cam = { x: 0, y: 0, scale: 1 };
             
@@ -3751,10 +3785,6 @@
             G.doors        = data.doors || [];
             G.smokes       = data.smokes || [];
             G.droneZone    = data.droneZone || null;
-            G.endGameMode  = data.endGameMode;
-            G.endGameTriggered = data.endGameTriggered;
-            G.endGameCountdownRemaining = data.endGameCountdownRemaining;
-            G.stormRadius  = data.stormRadius;
 
             updateHealthHUD();
             updateProximityHint();
@@ -3896,6 +3926,32 @@
             showNotif(t('doorToggled'), 'info');
         });
 
+        socket.on('hunterNoiseHeard', (data) => {
+            sfxPropNoise(data.volume);
+        });
+
+        let noiseAlertTimeout = null;
+        socket.on('youMadeNoise', () => {
+            sfxBeep(300, 0.15, 'sine', 0.12);
+
+            const alert = document.getElementById('propNoiseAlert');
+            const sub   = document.getElementById('propNoiseAlertSub');
+            if (!alert) return;
+
+            const isFr = (currentLang !== 'en');
+            alert.querySelector('div > div').textContent = isFr ? '🔊 BRUIT ÉMIS' : '🔊 NOISE EMITTED';
+            if (sub) sub.textContent = isFr ? 'LE CHASSEUR PEUT VOUS ENTENDRE' : 'THE HUNTER CAN HEAR YOU';
+
+            alert.style.display = 'block';
+            alert.style.opacity = '1';
+            if (noiseAlertTimeout) clearTimeout(noiseAlertTimeout);
+            noiseAlertTimeout = setTimeout(() => {
+                alert.style.transition = 'opacity 0.4s';
+                alert.style.opacity = '0';
+                setTimeout(() => { alert.style.display = 'none'; alert.style.transition = ''; }, 420);
+            }, 1800);
+        });
+
         socket.on('hunterGameOver', (data) => {
             document.getElementById('hunterHUD_standbyOverlay').classList.add('hidden');
             document.getElementById('hunterHUD_blindOverlay').classList.add('hidden');
@@ -4027,14 +4083,6 @@
 
         document.getElementById('btnSoloTest').addEventListener('click', () => {
             socket.emit('soloTest', {
-                avatar: document.getElementById('avatarSelect').value,
-                theme: document.getElementById('themeSelect').value
-            });
-        });
-
-        document.getElementById('btnHunterMode').addEventListener('click', () => {
-            socket.emit('setGameMode', 'hunter');
-            socket.emit('playerReady', {
                 avatar: document.getElementById('avatarSelect').value,
                 theme: document.getElementById('themeSelect').value
             });
@@ -6565,12 +6613,10 @@
         const teleporterParticles = [];
         function drawTeleporters() {
             if (G.theme !== 'Bloc Tactique') return;
+            if (!G.teleporters || G.teleporters.length === 0) return;
             const now = Date.now();
-            const pads = [
-                { x: 500, y: 500 },
-                { x: 2300, y: 1700 }
-            ];
-            
+            const pads = G.teleporters.map(tp => ({ x: tp.x, y: tp.y }));
+
             // Spawn rising particles periodically
             if (Math.random() < 0.15) {
                 const pad = pads[Math.floor(Math.random() * pads.length)];
@@ -7232,6 +7278,37 @@
             mmCtx.lineWidth = 1.5;
             mmCtx.strokeRect(1, 1, W-2, H-2);
 
+            // Last 30s of HUNT: tint map quadrants that still hide a prop (coarse reveal, no exact position).
+            if (myRole === 'hunter' && G.phase === 'HUNT' && G.phaseEndsAt) {
+                const remaining = G.phaseEndsAt - Date.now();
+                if (remaining > 0 && remaining <= 30000) {
+                    const halfW = G.mapSize.w / 2;
+                    const halfH = G.mapSize.h / 2;
+                    const quadrants = [false, false, false, false]; // TL, TR, BL, BR
+                    for (const p of Object.values(G.players)) {
+                        if (p.role !== 'prop' || p.eliminated) continue;
+                        const qx = p.x < halfW ? 0 : 1;
+                        const qy = p.y < halfH ? 0 : 1;
+                        quadrants[qy * 2 + qx] = true;
+                    }
+                    mmCtx.save();
+                    const pulse = 0.5 + 0.35 * Math.sin(Date.now() / 220);
+                    quadrants.forEach((active, i) => {
+                        if (!active) return;
+                        const qx = (i % 2) * (W / 2);
+                        const qy = Math.floor(i / 2) * (H / 2);
+                        mmCtx.globalAlpha = pulse;
+                        mmCtx.fillStyle = 'rgba(255, 180, 0, 0.45)';
+                        mmCtx.fillRect(qx, qy, W / 2, H / 2);
+                        mmCtx.globalAlpha = 1;
+                        mmCtx.strokeStyle = 'rgba(255, 210, 80, 0.8)';
+                        mmCtx.lineWidth = 1.5;
+                        mmCtx.strokeRect(qx, qy, W / 2, H / 2);
+                    });
+                    mmCtx.restore();
+                }
+            }
+
             mmCtx.fillStyle = 'rgba(100,90,50,0.4)';
             for (const p of G.props) {
                 mmCtx.fillRect(p.x * sx - 1, p.y * sy - 1, 2.2, 2.2);
@@ -7263,26 +7340,6 @@
                 mmCtx.beginPath();
                 mmCtx.arc(px, py, 3, 0, Math.PI * 2);
                 mmCtx.fill();
-            }
-
-            if (G.endGameMode === 'STORM' && G.endGameTriggered) {
-                const mcx = (G.mapSize.w / 2) * sx;
-                const mcy = (G.mapSize.h / 2) * sy;
-                const mr = G.stormRadius * sx;
-                
-                mmCtx.save();
-                mmCtx.fillStyle = 'rgba(150, 0, 0, 0.35)';
-                mmCtx.beginPath();
-                mmCtx.rect(0, 0, W, H);
-                mmCtx.arc(mcx, mcy, mr, 0, Math.PI * 2, true);
-                mmCtx.fill();
-                
-                mmCtx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
-                mmCtx.lineWidth = 2;
-                mmCtx.beginPath();
-                mmCtx.arc(mcx, mcy, mr, 0, Math.PI * 2);
-                mmCtx.stroke();
-                mmCtx.restore();
             }
 
             const camLeft = G.cam.x;
@@ -7423,7 +7480,6 @@
             }
 
             for (const [id, p] of Object.entries(G.players)) {
-                if (myRole === 'prop' && p.role === 'hunter' && id !== localPlayerId) continue;
                 const ip = interpolatedPlayers[id] || p;
                 const renderData = {
                     ...p,
@@ -7462,27 +7518,6 @@
 
             drawHunterEffects();
             drawDeathParticles(G.cam.x, G.cam.y, G.cam.scale);
-
-            // Draw Storm Zone inside camera view
-            if (G.endGameMode === 'STORM' && G.endGameTriggered) {
-                const cx = G.mapSize.w / 2;
-                const cy = G.mapSize.h / 2;
-                ctx.save();
-                ctx.fillStyle = 'rgba(150, 0, 0, 0.25)';
-                ctx.beginPath();
-                ctx.rect(0, 0, G.mapSize.w, G.mapSize.h);
-                ctx.arc(cx, cy, G.stormRadius, 0, Math.PI * 2, true);
-                ctx.fill();
-
-                ctx.strokeStyle = 'rgba(255, 0, 100, 0.8)';
-                ctx.lineWidth = 6;
-                ctx.shadowColor = 'rgba(255, 0, 100, 0.9)';
-                ctx.shadowBlur = 15;
-                ctx.beginPath();
-                ctx.arc(cx, cy, G.stormRadius, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.restore();
-            }
 
             ctx.restore();
 
@@ -8254,6 +8289,15 @@
                 }
             }
 
+            // Fade bush foliage when targetEnt is standing close enough to be hidden behind it
+            function bushAlphaFor(targetEnt, dec, lowAlpha) {
+                if (!targetEnt) return 0.98;
+                const dx = targetEnt.x - dec.x;
+                const dy = targetEnt.y - dec.y;
+                const checkRadius = dec.radius * 1.35;
+                return (dx * dx + dy * dy < checkRadius * checkRadius) ? lowAlpha : 0.98;
+            }
+
             // Draw Decorations ON TOP of entities (bush foliage, torches) — with frustum culling
             for (const dec of decorations) {
                 if (dec.x + dec.radius < vLeft || dec.x - dec.radius > vRight ||
@@ -8267,17 +8311,7 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        let isNearBush = false;
-                        if (targetEnt) {
-                            const dx = targetEnt.x - dec.x;
-                            const dy = targetEnt.y - dec.y;
-                            const distSq = dx * dx + dy * dy;
-                            const checkRadius = r * 1.35;
-                            if (distSq < checkRadius * checkRadius) {
-                                isNearBush = true;
-                            }
-                        }
-                        ctx.globalAlpha = isNearBush ? 0.38 : 0.98;
+                        ctx.globalAlpha = bushAlphaFor(targetEnt, dec, 0.38);
                         
                         ctx.fillStyle = 'rgba(46, 67, 42, 1.0)';
                         ctx.beginPath();
@@ -8360,17 +8394,7 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        let isNearBush = false;
-                        if (targetEnt) {
-                            const dx = targetEnt.x - dec.x;
-                            const dy = targetEnt.y - dec.y;
-                            const distSq = dx * dx + dy * dy;
-                            const checkRadius = r * 1.35;
-                            if (distSq < checkRadius * checkRadius) {
-                                isNearBush = true;
-                            }
-                        }
-                        ctx.globalAlpha = isNearBush ? 0.45 : 0.98;
+                        ctx.globalAlpha = bushAlphaFor(targetEnt, dec, 0.45);
                         
                         ctx.fillStyle = 'rgba(30, 32, 38, 1.0)';
                         ctx.beginPath();
@@ -8441,17 +8465,7 @@
                         const foliageR = r * 1.2;
                         ctx.save();
                         
-                        let isNearBush = false;
-                        if (targetEnt) {
-                            const dx = targetEnt.x - dec.x;
-                            const dy = targetEnt.y - dec.y;
-                            const distSq = dx * dx + dy * dy;
-                            const checkRadius = r * 1.35;
-                            if (distSq < checkRadius * checkRadius) {
-                                isNearBush = true;
-                            }
-                        }
-                        ctx.globalAlpha = isNearBush ? 0.35 : 0.98;
+                        ctx.globalAlpha = bushAlphaFor(targetEnt, dec, 0.35);
                         
                         ctx.fillStyle = 'rgba(0, 40, 35, 1.0)';
                         ctx.beginPath();

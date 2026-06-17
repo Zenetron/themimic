@@ -106,9 +106,13 @@ async function main() {
     });
 
     // Validate payload
+    // NOTE: startShuffle() always rolls a random theme (same as classic mode) — the
+    // theme requested via playerReady is just a lobby preview, not a guarantee. So
+    // tests below must read the actual rolled theme rather than assume 'Depot Alpha'.
+    const VALID_HUNTER_THEMES = ['Depot Alpha', 'Zone Charlie', 'Bloc Tactique'];
     if (hunterGameStartData) {
         test('hunterGameStart has gameMode === "hunter"', hunterGameStartData.gameMode === 'hunter');
-        test('hunterGameStart has theme', hunterGameStartData.theme === 'Depot Alpha');
+        test('hunterGameStart has theme', VALID_HUNTER_THEMES.includes(hunterGameStartData.theme));
         test('hunterGameStart has seed', hunterGameStartData.seed !== undefined);
         test('hunterGameStart has props array', Array.isArray(hunterGameStartData.props));
         test('hunterGameStart has hunterId', hunterGameStartData.hunterId !== undefined);
@@ -153,8 +157,13 @@ async function main() {
         test('hunterState hunterHealth === 100', hunterState.hunterHealth === 100);
         
         test('hunterState has doors array', Array.isArray(hunterState.doors));
-        test('hunterState has 1 vault door', hunterState.doors && hunterState.doors.length === 1);
-        if (hunterState.doors && hunterState.doors.length === 1) {
+        // The vault (and its single door) only generates on the 'Depot Alpha' map —
+        // other rolled themes legitimately have zero doors.
+        const rolledDepotAlpha = hunterGameStartData && hunterGameStartData.theme === 'Depot Alpha';
+        const expectedDoorCount = rolledDepotAlpha ? 1 : 0;
+        test(`hunterState has ${expectedDoorCount} door(s) for theme ${hunterGameStartData && hunterGameStartData.theme}`,
+            hunterState.doors && hunterState.doors.length === expectedDoorCount);
+        if (rolledDepotAlpha && hunterState.doors && hunterState.doors.length === 1) {
             test('vault door id is door_vault', hunterState.doors[0].id === 'door_vault');
         }
         

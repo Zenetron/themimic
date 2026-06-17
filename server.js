@@ -3,11 +3,20 @@ const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const path = require('path');
-const { HunterRoom, HUNTER_MAPS, pendingRejoin } = require('./hunter-room');
-
-function generateSessionToken() {
-    return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-}
+const { HunterRoom, HUNTER_MAPS } = require('./hunter-room');
+const {
+    generateSessionToken,
+    pendingRejoin,
+    migrateHostOnDisconnect,
+    startGracePeriod,
+    resumeLoopIfPaused,
+    cleanupRoomIfEmpty,
+    beginRejoin,
+    broadcastCountdown: broadcastCountdownShared,
+    safeOn,
+    safeTick,
+    isRateLimited
+} = require('./room-lifecycle');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -25,72 +34,29 @@ const hunterRooms = {};
 // Utility
 const rand = (min, max) => Math.random() * (max - min) + min;
 
-// Seeded PRNG (mulberry32) for shared map generation
-function mulberry32(a) {
-    return function() {
-        let t = a += 0x6D2B79F5;
-        t = Math.imul(t ^ t >>> 15, t | 1);
-        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-        return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    }
-}
-
-function randSeeded(rng, min, max) {
-    return rng() * (max - min) + min;
-}
-
-// Generate hunter-mode objects given a seed and map size
-function generateHunterObjects(seed, mapSize, count) {
-    const rng = mulberry32(seed >>> 0);
-    const pool = [
-        { type: 'crate_small', size: 28 },
-        { type: 'crate_med', size: 42 },
-        { type: 'crate_large', size: 60 },
-        { type: 'barrel', size: 36 },
-        { type: 'extinguisher', size: 30 },
-        { type: 'cone', size: 20 },
-        { type: 'pallet', size: 48 },
-        { type: 'generator', size: 50 },
-        { type: 'toolbox', size: 26 }
-    ];
-
-    const out = [];
-    const minSpacing = 60;
-    let attempts = 0;
-    while (out.length < count && attempts < count * 12) {
-        attempts++;
-        const pick = pool[Math.floor(rng() * pool.length)];
-        const x = Math.floor(randSeeded(rng, 100, mapSize.w - 100));
-        const y = Math.floor(randSeeded(rng, 100, mapSize.h - 100));
-
-        // ensure spacing
-        let ok = true;
-        for (const o of out) {
-            const dx = o.x - x;
-            const dy = o.y - y;
-            if (dx * dx + dy * dy < (minSpacing + o.size) * (minSpacing + o.size)) { ok = false; break; }
-        }
-        if (!ok) continue;
-
-        out.push({ id: `obj_${out.length}_${Math.floor(rng()*1e6)}`, type: pick.type, x, y, size: pick.size, animated: false });
-    }
-
-    // add 2-3 animated decoys
-    const animatedCount = Math.max(2, Math.min(3, Math.floor(rng() * 4)));
-    for (let i = 0; i < animatedCount && i < out.length; i++) {
-        out[i].animated = true; // first ones are animated for confusion
-    }
-    return out;
-}
-
 const INDUSTRIAL_THEMES = ['Military Base', 'Forest', 'Arcade Grid'];
 const WAREHOUSE_THEMES = ['Weapon Warehouse', 'Cave', 'Toy Factory'];
 const COMMAND_THEMES = ['Command Center', 'Desert', 'Micro-Circuit'];
+const VALID_CLASSIC_THEMES = [...INDUSTRIAL_THEMES, ...WAREHOUSE_THEMES, ...COMMAND_THEMES];
 
 function getMapRule(theme) {
     if (WAREHOUSE_THEMES.includes(theme)) return 'alarm';
     if (COMMAND_THEMES.includes(theme)) return 'radar';
     return 'sync';
+}
+
+// Coerces an untrusted movement-input payload into a safe boolean-only shape,
+// so a malformed/malicious client can't crash movement code or store garbage.
+function sanitizeMovementInput(input) {
+    if (!input || typeof input !== 'object') {
+        return { up: false, down: false, left: false, right: false };
+    }
+    return {
+        up:    !!input.up,
+        down:  !!input.down,
+        left:  !!input.left,
+        right: !!input.right
+    };
 }
 
 // Generate 4 letter code
@@ -130,11 +96,6 @@ class Entity {
 
         // Player Input State
         this.input = { up: false, down: false, left: false, right: false };
-        this.isGhost = false; // hunter mode: ghost player
-        this.isHunter = false;
-        this.isDisguised = false;
-        this.disguiseObjectId = null;
-        this.hasDisguisedOnce = false;
     }
 
     getBotColor() {
@@ -231,17 +192,6 @@ class Entity {
         this.vx = 0;
         this.vy = 0;
         let speed = 3;
-
-        // Hunter-mode constraints: ghosts immobilized during RECON
-        if (room && room.gameMode === 'hunter' && this.isGhost) {
-            const phase = room.hunterPhase || 'RECON';
-            if (phase === 'RECON') {
-                // immobilized
-                return;
-            }
-            // if disguised, move slower
-            if (this.isDisguised) speed *= 0.4;
-        }
 
         if (this.input.up) this.vy -= speed;
         if (this.input.down) this.vy += speed;
@@ -574,6 +524,8 @@ class Entity {
 class GameRoom {
     constructor(roomId, hostSocket, isQuickMatch = false) {
         this.roomId = roomId;
+        this.io = io;
+        this.roomsRef = rooms;
         this.players = {}; // socket.id -> { playerNum, socket, lives, isReady, avatar }
         this.entities = [];
         this.state = 'LOBBY'; // LOBBY, COUNTDOWN, PLAYING, GAME_OVER
@@ -650,13 +602,13 @@ class GameRoom {
 
     _bindSocket(socket) {
         // Listeners for this room
-        socket.on('playerReady', (data) => {
+        safeOn(socket, 'playerReady', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
             const p = this.players[socket.id];
             if (p && !p.isReady) {
                 p.isReady = true;
-                p.avatar = data.avatar;
-                if (p.playerNum === 1 && data.theme) {
+                p.avatar = (data && typeof data.avatar === 'string') ? data.avatar.slice(0, 40) : 'Combat-Operative';
+                if (p.playerNum === 1 && data && VALID_CLASSIC_THEMES.includes(data.theme)) {
                     this.theme = data.theme;
                 }
                 io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
@@ -683,40 +635,28 @@ class GameRoom {
             }
         });
 
-        // Allow host to set game mode (e.g., 'hunter')
-        socket.on('setGameMode', (mode) => {
-            if (this.players[socket.id] && this.players[socket.id].playerNum === 1) {
-                this.gameMode = mode;
-                io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
-            }
-        });
-
-        // Ghost blend request (during CACHE phase)
-        socket.on('blendRequest', () => {
-            if (this.state !== 'PLAYING') return;
-            this.handleBlend(socket.id);
-        });
-
-        socket.on('soloTest', (data) => {
+        safeOn(socket, 'soloTest', (data) => {
             if (this.state !== 'LOBBY' && this.state !== 'COUNTDOWN') return;
             const p = this.players[socket.id];
             if (p) {
                 p.isReady = true;
-                p.avatar = data.avatar || 'Combat-Operative';
-                if (data.theme) this.theme = data.theme;
+                p.avatar = (data && typeof data.avatar === 'string') ? data.avatar.slice(0, 40) : 'Combat-Operative';
+                if (data && VALID_CLASSIC_THEMES.includes(data.theme)) this.theme = data.theme;
                 this.stopCountdown();
                 this.startShuffle();
             }
         });
 
-        socket.on('input', (inputData) => {
+        safeOn(socket, 'input', (inputData) => {
             if (this.state !== 'PLAYING') return;
             const pEnt = this.entities.find(e => e.isPlayer && e.id === socket.id);
-            if (pEnt) pEnt.input = inputData;
+            if (pEnt) pEnt.input = sanitizeMovementInput(inputData);
         });
 
-        socket.on('tagAttempt', (data) => {
+        safeOn(socket, 'tagAttempt', (data) => {
             if (this.state !== 'PLAYING') return;
+            if (isRateLimited(socket, 'tagAttempt', 80)) return;
+            if (!data || !Number.isFinite(data.x) || !Number.isFinite(data.y)) return;
             this.handleTagAttempt(socket.id, data.x, data.y);
         });
     }
@@ -728,7 +668,7 @@ class GameRoom {
         this.countdownSeconds = this.MAX_COUNTDOWN;
         this.broadcastCountdown();
 
-        this.countdownTimer = setInterval(() => {
+        this.countdownTimer = setInterval(safeTick('countdownTimer', () => {
             this.countdownSeconds--;
 
             if (this.countdownSeconds <= 0) {
@@ -748,7 +688,7 @@ class GameRoom {
             }
 
             this.broadcastCountdown();
-        }, 1000);
+        }), 1000);
     }
 
     stopCountdown() {
@@ -764,37 +704,7 @@ class GameRoom {
     }
 
     broadcastCountdown() {
-        const humans = Object.values(this.players).filter(p => !p.isBot);
-        const realCount = humans.length;
-
-        // Last 5s of quick match solo (only 1 real player): reveal fake P2-P6 one by one
-        let fakeCount = 0;
-        if (this.isQuickMatch && realCount === 1 && this.countdownSeconds <= 5 && this.countdownSeconds > 0) {
-            fakeCount = Math.min(this.MAX_PLAYERS - realCount, 6 - this.countdownSeconds);
-        }
-
-        const slots = Array.from({ length: this.MAX_PLAYERS }, (_, i) => {
-            if (i < realCount) {
-                const p = humans[i];
-                return { type: 'player', ready: p.isReady, num: p.playerNum };
-            }
-            if (this.isQuickMatch && i < realCount + fakeCount) {
-                return { type: 'player', ready: true, num: i + 1 };
-            }
-            // Quick match: show searching slots (not empty)
-            if (this.isQuickMatch) return { type: 'searching' };
-            return { type: 'empty' };
-        });
-
-        io.to(this.roomId).emit('lobbyCountdown', {
-            seconds: this.isQuickMatch ? this.countdownSeconds : null,
-            total: this.MAX_COUNTDOWN,
-            slots,
-            readyCount: humans.filter(p => p.isReady).length + fakeCount,
-            playerCount: realCount + fakeCount,
-            hostId: this.hostId,
-            isQuickMatch: this.isQuickMatch
-        });
+        broadcastCountdownShared(this);
     }
 
     getLobbyStatus() {
@@ -809,30 +719,6 @@ class GameRoom {
             state: this.state,
             gameMode: this.gameMode || 'classic'
         };
-    }
-
-    serializeHunterState() {
-        const out = {
-            entities: this.entities.map(e => ({
-                id: e.id,
-                x: Math.round(e.x),
-                y: Math.round(e.y),
-                angle: Math.round(e.angle * 100) / 100,
-                isPlayer: e.isPlayer,
-                isHunter: e.isHunter,
-                isGhost: e.isGhost,
-                isDisguised: e.isDisguised,
-                disguiseObjectId: e.disguiseObjectId,
-                eliminated: this.players[e.id] ? this.players[e.id].lives <= 0 : false,
-                avatar: e.avatarType
-            })),
-            objects: this.hunterObjects || [],
-            phase: this.hunterPhase,
-            phaseRemaining: Math.max(0, this.phaseRemaining || 0),
-            hunterLives: this.players[this.hunterId] ? this.players[this.hunterId].lives : 0,
-            ghostIds: this.ghostIds || []
-        };
-        return out;
     }
 
     startShuffle() {
@@ -857,7 +743,7 @@ class GameRoom {
         this.endGameMode = modes[Math.floor(Math.random() * modes.length)];
 
         // Shuffling duration (shorter for tests)
-        const isTest = (this.roomId === 'MIMIC' || this.roomId.toLowerCase().includes('test'));
+        const isTest = this.roomId.toLowerCase().includes('test');
         const duration = isTest ? 500 : 3000;
 
         // Emit shuffle command to all clients
@@ -881,17 +767,12 @@ class GameRoom {
         for (const p of Object.values(this.players)) {
             p.isReady = true;
         }
-        // If Hunter mode selected, use hunter-specific start flow
-        if (this.gameMode === 'hunter') {
-            this.startHunterGame();
-            return;
-        }
         this.entities = [];
         this.endGameTriggered = false;
         const modeTimers = { STORM: 30000, FREEZE: 60000, PURGE: 30000, TEMPETE: 60000, GEL: 60000, DISPARITION: 30000 };
         this.endGameCountdownRemaining = modeTimers[this.endGameMode] || 30000;
 
-        const maxRealPlayers = 6;
+        const maxRealPlayers = this.MAX_PLAYERS;
         const currentRealPlayerIds = Object.keys(this.players);
         const currentRealPlayerCount = currentRealPlayerIds.length;
         const shouldFillBots = currentRealPlayerCount === 1;
@@ -1008,161 +889,7 @@ class GameRoom {
         });
 
         this.lastTime = Date.now();
-        this.interval = setInterval(() => this.gameLoop(), 1000 / FPS);
-    }
-
-    // Hunter-mode start: assign roles, generate objects, set phase timers
-    startHunterGame() {
-        this.entities = [];
-
-        const maxRealPlayers = 6;
-        const currentRealPlayerIds = Object.keys(this.players);
-        const currentRealPlayerCount = currentRealPlayerIds.length;
-        const shouldFillBots = currentRealPlayerCount === 1;
-        if (shouldFillBots && currentRealPlayerCount < maxRealPlayers) {
-            const botNames = this.isQuickMatch
-                ? ['P2', 'P3', 'P4', 'P5', 'P6']
-                : ['🤖 OPERATIVE-ALPHA', '🤖 DRONE-BETA', '🤖 SNIPER-DELTA', '🤖 HEAVY-SIGMA', '🤖 SCOUT-EPSILON', '🤖 MEDIC-ZETA'];
-            const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
-            let botIdx = 0;
-            for (let i = 1; i <= maxRealPlayers; i++) {
-                const numTaken = Object.values(this.players).some(p => p.playerNum === i);
-                if (!numTaken) {
-                    const botId = `bot_player_${i}`;
-                    const randomAvatar = avatarTypes[Math.floor(Math.random() * avatarTypes.length)];
-                    this.players[botId] = {
-                        playerNum: i,
-                        lives: STARTING_LIVES,
-                        isReady: true,
-                        avatar: randomAvatar,
-                        isBot: true,
-                        name: botNames[botIdx % botNames.length]
-                    };
-                    botIdx++;
-                }
-            }
-        }
-
-        const pCount = Object.keys(this.players).length;
-        if (pCount <= 2) {
-            this.mapSize = { w: 2000, h: 1800 };
-        } else if (pCount <= 4) {
-            this.mapSize = { w: 2800, h: 2400 };
-        } else {
-            this.mapSize = { w: 3800, h: 3200 };
-        }
-
-        // Choose hunter: first human player (non-bot), else first player
-        const humanIds = Object.keys(this.players).filter(id => !this.players[id].isBot);
-        let hunterId = humanIds.length > 0 ? humanIds[0] : Object.keys(this.players)[0];
-        this.hunterId = hunterId;
-        this.ghostIds = Object.keys(this.players).filter(id => id !== hunterId);
-
-        // Generate procedural objects with a seed
-        const seed = Math.floor(Math.random() * 1e9);
-        this.hunterSeed = seed;
-        const objCount = Math.floor(rand(40, 70));
-        this.hunterObjects = generateHunterObjects(seed, this.mapSize, objCount);
-
-        // Initialize decorations (rocks, bushes) for physics even in hunter mode
-        this.decorations = [];
-        const numBushes = 10;
-        const numRocks = 5;
-        for (let i = 0; i < numBushes; i++) {
-            const r = rand(42, 58);
-            this.decorations.push({
-                id: `bush_${i}`, type: 'BUSH',
-                x: rand(100, this.mapSize.w - 100),
-                y: rand(100, this.mapSize.h - 100),
-                radius: r,
-                radiusSq: r * r
-            });
-        }
-        for (let i = 0; i < numRocks; i++) {
-            this.decorations.push({
-                id: `rock_${i}`, type: 'ROCK',
-                x: rand(100, this.mapSize.w - 100),
-                y: rand(100, this.mapSize.h - 100),
-                radius: rand(18, 32)
-            });
-        }
-        this.rockDecorations = this.decorations.filter(d => d.type === 'ROCK');
-        this.bushDecorations = this.decorations.filter(d => d.type === 'BUSH');
-
-        // Create player entities: hunter + ghosts
-        for (const [socketId, p] of Object.entries(this.players)) {
-            p.lives = STARTING_LIVES;
-            let pEnt = new Entity(socketId, true, p.playerNum, p.avatar);
-            pEnt.x = rand(100, this.mapSize.w - 100);
-            pEnt.y = rand(100, this.mapSize.h - 100);
-            if (socketId === hunterId) {
-                pEnt.isHunter = true;
-            } else {
-                pEnt.isGhost = true;
-            }
-            this.entities.push(pEnt);
-        }
-
-        // Add neutral bots to populate the scene (non-ghost NPCs)
-        const avatarTypes = ['Combat-Operative', 'Recon-Drone', 'Stealth-Sniper', 'Heavy-Gunner'];
-        const botFill = 30; // background bots
-        for (let i = 0; i < botFill; i++) {
-            const randomAvatar = avatarTypes[Math.floor(Math.random() * avatarTypes.length)];
-            let bot = new Entity(`bot_${i}`, false, 0, randomAvatar);
-            bot.x = rand(0, this.mapSize.w);
-            bot.y = rand(0, this.mapSize.h);
-            this.entities.push(bot);
-        }
-
-        // Phases: RECON 20s, CACHE 30s, CHASSE 5min
-        this.hunterPhase = 'RECON';
-        this.phaseRemaining = 20000;
-
-        io.to(this.roomId).emit('hunterStart', {
-            seed: seed,
-            objects: this.hunterObjects,
-            hunterId: this.hunterId,
-            ghostIds: this.ghostIds,
-            phase: this.hunterPhase,
-            phaseRemaining: this.phaseRemaining
-        });
-
-        this.lastTime = Date.now();
-        this.interval = setInterval(() => this.gameLoop(), 1000 / FPS);
-    }
-
-    handleBlend(socketId) {
-        // Ghost attempts to disguise to nearest object during CACHE phase
-        const p = this.players[socketId];
-        if (!p) return;
-        if (this.gameMode !== 'hunter') return;
-        if (this.hunterPhase !== 'CACHE') return;
-
-        const ent = this.entities.find(e => e.id === socketId);
-        if (!ent || !ent.isGhost) return;
-        if (ent.hasDisguisedOnce) return; // only once per round
-
-        // find nearest object within 60 px
-        let nearest = null;
-        let nd = 999999;
-        for (const o of this.hunterObjects) {
-            const dx = o.x - ent.x;
-            const dy = o.y - ent.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 < nd && d2 <= 60 * 60) {
-                nd = d2;
-                nearest = o;
-            }
-        }
-        if (!nearest) return;
-
-        ent.x = nearest.x;
-        ent.y = nearest.y;
-        ent.isDisguised = true;
-        ent.disguiseObjectId = nearest.id;
-        ent.hasDisguisedOnce = true;
-
-        io.to(this.roomId).emit('playerDisguised', { id: socketId, objectId: nearest.id });
+        this.interval = setInterval(safeTick('gameLoop', () => this.gameLoop()), 1000 / FPS);
     }
 
     _spawnStartItem() {
@@ -1209,9 +936,6 @@ class GameRoom {
 
         if (!shooter || !shooterEnt || shooter.lives <= 0) return;
 
-        // In hunter mode, only the hunter may tag
-        if (this.gameMode === 'hunter' && !shooterEnt.isHunter) return;
-
         // Check if click is out of bounds (Proximity tagging)
         const dxRange = clickX - shooterEnt.x;
         const dyRange = clickY - shooterEnt.y;
@@ -1232,31 +956,6 @@ class GameRoom {
                 hitEntity = ent;
                 break;
             }
-        }
-
-        if (!hitEntity && this.gameMode === 'hunter') {
-            // If click near a decor object -> false alarm heavy penalty
-            let nearObj = null;
-            for (const o of (this.hunterObjects || [])) {
-                const dx = clickX - o.x;
-                const dy = clickY - o.y;
-                if (dx * dx + dy * dy <= (o.size + 10) * (o.size + 10)) { nearObj = o; break; }
-            }
-            if (nearObj) {
-                shooter.lives -= 15;
-            } else {
-                shooter.lives -= 5;
-            }
-            io.to(this.roomId).emit('livesUpdated', this.getPlayersInfo());
-            if (shooter.lives <= 0) {
-                this.entities = this.entities.filter(e => e.id !== shooterEnt.id);
-                const living = Object.keys(this.players).filter(id => this.players[id].lives > 0);
-                this.cachedAlivePlayers = living.length;
-                if (living.length <= 1) {
-                    setTimeout(() => { if (this.state === 'PLAYING') this.endGame(living[0] || null); }, 800);
-                }
-            }
-            return;
         }
 
         if (hitEntity) {
@@ -1459,35 +1158,6 @@ class GameRoom {
         const dt = now - this.lastTime;
         this.lastTime = now;
 
-        // Hunter-mode phase management
-        if (this.gameMode === 'hunter' && this.state === 'PLAYING') {
-            if (this.phaseRemaining !== undefined) {
-                this.phaseRemaining -= dt;
-                if (this.phaseRemaining <= 0) {
-                    if (this.hunterPhase === 'RECON') {
-                        // Switch to CACHE
-                        this.hunterPhase = 'CACHE';
-                        this.phaseRemaining = 30000;
-                        // Blind the hunter client briefly (clients will handle UI)
-                        if (this.players[this.hunterId] && this.players[this.hunterId].socket) {
-                            this.players[this.hunterId].socket.emit('hunterBlind', { duration: 30000 });
-                        }
-                        io.to(this.roomId).emit('hunterPhase', { phase: 'CACHE', remaining: this.phaseRemaining });
-                    } else if (this.hunterPhase === 'CACHE') {
-                        // Switch to CHASSE
-                        this.hunterPhase = 'CHASSE';
-                        this.phaseRemaining = 240000; // 4 minutes
-                        io.to(this.roomId).emit('hunterPhase', { phase: 'CHASSE', remaining: this.phaseRemaining });
-                    } else if (this.hunterPhase === 'CHASSE') {
-                        // End round: ghosts survive -> ghosts win
-                        // determine winner or emit round end
-                        io.to(this.roomId).emit('hunterPhase', { phase: 'ENDED' });
-                        this.endGame(null);
-                        return;
-                    }
-                }
-            }
-        }
 
         // Item Spawning Logic
         this.itemSpawnTimer -= dt;
@@ -1562,7 +1232,7 @@ class GameRoom {
         }
 
         // Handle classic endgame modes
-        if (this.state === 'PLAYING' && this.gameMode !== 'hunter') {
+        if (this.state === 'PLAYING') {
             if (!this.endGameTriggered) {
                 this.endGameCountdownRemaining = Math.max(0, this.endGameCountdownRemaining - dt);
                 if (this.endGameCountdownRemaining <= 0) {
@@ -1605,11 +1275,9 @@ class GameRoom {
                                         const living = Object.keys(this.players).filter(pid => this.players[pid].lives > 0);
                                         this.cachedAlivePlayers = living.length;
                                         if (living.length === 1) {
-                                            this.endGame(living[0]);
-                                            return;
+                                            setTimeout(() => { if (this.state === 'PLAYING') this.endGame(living[0]); }, 800);
                                         } else if (living.length === 0) {
-                                            this.endGame(null);
-                                            return;
+                                            setTimeout(() => { if (this.state === 'PLAYING') this.endGame(null); }, 800);
                                         }
                                     }
                                 } else {
@@ -1646,26 +1314,21 @@ class GameRoom {
         if (this.netTickTimer >= 50) { // 50ms = 20fps
             this.netTickTimer = 0;
             
-            // Hunter mode: serialize differently
-            if (this.gameMode === 'hunter') {
-                io.to(this.roomId).volatile.emit('gameState', this.serializeHunterState());
-            } else {
-                const statePayload = {
-                    e: this.entities.map(e => e.serialize()),
-                    i: this.items,
-                    a: this.cachedAlivePlayers,
-                    t: this.cachedTotalPlayers,
-                    p: this.getActivePings(now),
-                    egm: this.endGameMode,
-                    egt: this.endGameTriggered,
-                    egc: this.endGameCountdownRemaining,
-                    sr: this.stormRadius
-                };
-                if (mapRule === 'radar') {
-                    statePayload.ra = Math.round(this.radarAngle * 100) / 100;
-                }
-                io.to(this.roomId).volatile.emit('gameState', statePayload);
+            const statePayload = {
+                e: this.entities.map(e => e.serialize()),
+                i: this.items,
+                a: this.cachedAlivePlayers,
+                t: this.cachedTotalPlayers,
+                p: this.getActivePings(now),
+                egm: this.endGameMode,
+                egt: this.endGameTriggered,
+                egc: this.endGameCountdownRemaining,
+                sr: this.stormRadius
+            };
+            if (mapRule === 'radar') {
+                statePayload.ra = Math.round(this.radarAngle * 100) / 100;
             }
+            io.to(this.roomId).volatile.emit('gameState', statePayload);
         }
     }
 
@@ -1674,57 +1337,20 @@ class GameRoom {
         const p = this.players[socketId];
         if (!p) return;
 
-        // Host migration
-        if (socketId === this.hostId) {
-            const next = Object.entries(this.players)
-                .filter(([id, pl]) => !pl.isBot && id !== socketId)
-                .sort(([, a], [, b]) => a.playerNum - b.playerNum)[0];
-            if (next) {
-                this.hostId = next[0];
-                io.to(this.roomId).emit('hostMigrated', { newHostId: this.hostId });
-            }
-        }
+        migrateHostOnDisconnect(this, socketId);
 
         // Grace period during game for human players
         if (this.state === 'PLAYING' && !p.isBot && p.sessionToken) {
-            const token = p.sessionToken;
-            p.disconnected = true;
-            p.socket = null;
-
-            pendingRejoin[token] = {
-                room: this,
-                socketId,
-                isHunter: false,
-                timer: setTimeout(() => {
-                    delete pendingRejoin[token];
-                    this._permanentRemove(socketId);
-                }, 15000)
-            };
-
-            io.to(this.roomId).emit('playerDisconnected', { socketId, graceSecs: 15 });
+            startGracePeriod(this, socketId, p, false);
             return;
         }
 
         delete this.players[socketId];
         this._checkAfterRemoval(socketId);
-    }
-
-    _permanentRemove(socketId) {
-        const p = this.players[socketId];
-        if (!p) return;
-        delete this.players[socketId];
-        this._checkAfterRemoval(socketId);
-        io.to(this.roomId).emit('playerLeft', { socketId });
     }
 
     _checkAfterRemoval(socketId) {
-        const humansLeft = Object.values(this.players).filter(p => !p.isBot);
-        if (humansLeft.length === 0) {
-            this.stopCountdown();
-            if (this.interval) clearInterval(this.interval);
-            delete rooms[this.roomId];
-            return;
-        }
+        if (cleanupRoomIfEmpty(this)) return;
 
         if (this.state === 'PLAYING') {
             this.entities = this.entities.filter(e => e.id !== socketId);
@@ -1739,22 +1365,20 @@ class GameRoom {
     }
 
     rejoinPlayer(newSocket, oldSocketId) {
-        const p = this.players[oldSocketId];
-        if (!p) { newSocket.emit('rejoinFailed'); return; }
-
-        const token = generateSessionToken();
-        this.players[newSocket.id] = { ...p, socket: newSocket, disconnected: false, sessionToken: token };
-        delete this.players[oldSocketId];
+        const p = beginRejoin(this, newSocket, oldSocketId);
+        if (!p) return;
 
         const ent = this.entities.find(e => e.id === oldSocketId);
         if (ent) ent.id = newSocket.id;
+
+        resumeLoopIfPaused(this, FPS);
 
         newSocket.join(this.roomId);
         this._bindSocket(newSocket);
 
         newSocket.emit('rejoinSuccess', {
             mode: 'mimic',
-            sessionToken: token,
+            sessionToken: this.players[newSocket.id].sessionToken,
             roomCode: this.roomId,
             isHunter: false,
             lives: p.lives,
@@ -1774,15 +1398,17 @@ io.on('connection', (socket) => {
     let currentHunterRoom = null;  // HUNTER HunterRoom
 
     // ── MIMIC MODE ──────────────────────────────────────────
-    socket.on('createRoom', () => {
+    safeOn(socket, 'createRoom', () => {
+        if (isRateLimited(socket, 'createRoom', 3000)) return;
         const code = generateRoomCode();
         currentRoom = new GameRoom(code, socket);
         rooms[code] = currentRoom;
         socket.emit('roomCreated', code);
     });
 
-    socket.on('joinRoom', (code) => {
-        code = code.toUpperCase();
+    safeOn(socket, 'joinRoom', (code) => {
+        if (!code) return;
+        code = code.toString().toUpperCase();
         const room = rooms[code];
         if (room) {
             if (Object.keys(room.players).length < room.MAX_PLAYERS && (room.state === 'LOBBY' || room.state === 'COUNTDOWN')) {
@@ -1797,7 +1423,8 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('joinRandomRoom', (data) => {
+    safeOn(socket, 'joinRandomRoom', (data) => {
+        if (isRateLimited(socket, 'joinRandomRoom', 1500)) return;
         const mode = (data && data.mode) ? data.mode : 'mimic';
         if (mode === 'hunter') {
             const availableRooms = Object.values(hunterRooms).filter(
@@ -1836,7 +1463,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('togglePublic', () => {
+    safeOn(socket, 'togglePublic', () => {
         if (currentRoom && currentRoom.players[socket.id]?.playerNum === 1 && !currentRoom.isQuickMatch) {
             currentRoom.isPublic = !currentRoom.isPublic;
             io.to(currentRoom.roomId).emit('roomStatus', currentRoom.getLobbyStatus());
@@ -1846,13 +1473,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('backToLobby', () => {
+    safeOn(socket, 'backToLobby', () => {
         if (currentRoom) currentRoom.resetToLobby();
         if (currentHunterRoom) currentHunterRoom.resetToLobby();
     });
 
     // Global startNow handler for both modes
-    socket.on('startNow', () => {
+    safeOn(socket, 'startNow', () => {
         console.log('[server.js GLOBAL] startNow received from', socket.id);
         if (currentHunterRoom && currentHunterRoom.hostId === socket.id) {
             console.log('[server.js] Starting HunterRoom shuffle');
@@ -1870,12 +1497,13 @@ io.on('connection', (socket) => {
     });
 
     // ── HUNTER MODE ─────────────────────────────────────────
-    socket.on('createHunterRoom', () => {
+    safeOn(socket, 'createHunterRoom', () => {
         // Prevent creating if already in a room
         if (currentHunterRoom || currentRoom) {
             socket.emit('errorMsg', 'Tu es déjà dans une room.');
             return;
         }
+        if (isRateLimited(socket, 'createHunterRoom', 3000)) return;
         const code = generateRoomCode();
         const room = new HunterRoom(code, socket, io, hunterRooms);
         hunterRooms[code] = room;
@@ -1883,7 +1511,7 @@ io.on('connection', (socket) => {
         socket.emit('hunterRoomCreated', { code, maps: Object.keys(HUNTER_MAPS) });
     });
 
-    socket.on('joinHunterRoom', (code) => {
+    safeOn(socket, 'joinHunterRoom', (code) => {
         if (!code) return;
         code = code.toString().toUpperCase();
         const room = hunterRooms[code];
@@ -1896,7 +1524,7 @@ io.on('connection', (socket) => {
             return;
         }
         if (Object.keys(room.players).length >= room.MAX_PLAYERS) {
-            socket.emit('errorMsg', 'Room HUNTER complète (4 joueurs max).');
+            socket.emit('errorMsg', `Room HUNTER complète (${room.MAX_PLAYERS} joueurs max).`);
             return;
         }
         currentHunterRoom = room;
@@ -1905,7 +1533,8 @@ io.on('connection', (socket) => {
     });
 
     // ── REJOIN ──────────────────────────────────────────────
-    socket.on('rejoinRoom', ({ token }) => {
+    safeOn(socket, 'rejoinRoom', (data) => {
+        const token = data && data.token;
         if (!token) return;
         const entry = pendingRejoin[token];
         if (!entry) {
@@ -1925,10 +1554,21 @@ io.on('connection', (socket) => {
     });
 
     // ── DISCONNECT ──────────────────────────────────────────
-    socket.on('disconnect', () => {
+    safeOn(socket, 'disconnect', () => {
         if (currentRoom)       currentRoom.handleDisconnect(socket.id);
         if (currentHunterRoom) currentHunterRoom.handleDisconnect(socket.id);
     });
+});
+
+// Last-resort net: safeOn/safeTick already catch errors in socket handlers and game
+// ticks, but anything that slips through (a timer callback we didn't wrap, a stray
+// promise) would otherwise kill the process and drop every active room/game at once.
+// Logging and staying up is the right tradeoff here over crash-and-restart.
+process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (err) => {
+    console.error('[unhandledRejection]', err);
 });
 
 const PORT = process.env.PORT || 3000;
