@@ -155,18 +155,19 @@ function broadcastCountdown(room, extra = {}) {
         if (room.isQuickMatch && i < realCount + fakeCount) {
             return { type: 'player', ready: true, num: i + 1 };
         }
-        if (room.isQuickMatch) return { type: 'searching' };
+        if (room.isPublic || room.isQuickMatch) return { type: 'searching' };
         return { type: 'empty' };
     });
 
     room.io.to(room.roomId).emit('lobbyCountdown', {
-        seconds: room.isQuickMatch ? room.countdownSeconds : null,
+        seconds: (room.isPublic || room.isQuickMatch) ? room.countdownSeconds : null,
         total: room.MAX_COUNTDOWN,
         slots,
         readyCount: humans.filter(p => p.isReady).length + fakeCount,
         playerCount: realCount + fakeCount,
         hostId: room.hostId,
         isQuickMatch: room.isQuickMatch,
+        isPublic: room.isPublic,
         ...extra
     });
 }

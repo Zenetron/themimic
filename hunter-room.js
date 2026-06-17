@@ -30,7 +30,6 @@ const PHASE_DURATIONS = {
 
 // Endgame mode (STORM/FREEZE/PURGE) triggers this many ms before HUNT ends,
 // not after HUNT starts — storm fully closes (2500 / 28px/s ≈ 89s) right around phase end.
-const ENDGAME_LEAD_MS = 90000;
 
 // Props periodically make noise during HUNT — interval shrinks from NOISE_START_INTERVAL
 // down to NOISE_MIN_INTERVAL as the phase progresses. The hunter only hears it within
@@ -638,12 +637,11 @@ class HunterRoom {
 
         if (this.state === 'COUNTDOWN') {
             this.countdownSeconds = Math.min(this.MAX_COUNTDOWN, this.countdownSeconds + 15);
-            this.broadcastCountdown();
-        } else {
-            this.broadcastCountdown();
         }
 
         this.io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
+        // Broadcast slots AFTER roomStatus so the client receives them in the right order
+        this.broadcastCountdown();
     }
 
     // ─── Socket bindings ────────────────────────
@@ -662,12 +660,13 @@ class HunterRoom {
 
             const keys     = Object.keys(this.players);
             const allReady = keys.every(k => this.players[k].isReady);
-            if (keys.length >= this.MAX_PLAYERS && allReady) {
+
+            if (allReady) {
                 this.stopCountdown();
                 this.startShuffle();
                 return;
             }
-            if (this.isQuickMatch) {
+            if (this.isPublic || this.isQuickMatch) {
                 if (this.state === 'LOBBY') this.startCountdown();
                 else this.broadcastCountdown();
             } else {

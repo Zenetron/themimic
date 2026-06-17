@@ -587,17 +587,16 @@ class GameRoom {
 
         socket.join(this.roomId);
 
-        // If countdown is running, a new real player joined — extend or reset timer
+        // If countdown is running, a new real player joined — extend timer
         if (this.state === 'COUNTDOWN') {
             const extended = Math.min(this.MAX_COUNTDOWN, this.countdownSeconds + 15);
             this.countdownSeconds = extended;
-            this.broadcastCountdown();
-        } else {
-            this.broadcastCountdown();
         }
 
         this._bindSocket(socket);
         io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
+        // Broadcast slots AFTER roomStatus so the client receives them in the right order
+        this.broadcastCountdown();
     }
 
     _bindSocket(socket) {
@@ -613,23 +612,25 @@ class GameRoom {
                 }
                 io.to(this.roomId).emit('roomStatus', this.getLobbyStatus());
 
-                // If room full + all ready → instant start
                 const pKeys = Object.keys(this.players);
                 const allReady = pKeys.every(k => this.players[k].isReady);
-                if (pKeys.length >= this.MAX_PLAYERS && allReady) {
+
+                // All ready → start immediately regardless of room size
+                if (allReady) {
                     this.stopCountdown();
                     this.startShuffle();
                     return;
                 }
 
-                // Start countdown on first ready player (Quick Match only)
-                if (this.isQuickMatch) {
+                // Public or Quick Match: run countdown so QM players can fill in
+                if (this.isPublic || this.isQuickMatch) {
                     if (this.state === 'LOBBY') {
                         this.startCountdown();
                     } else {
-                        this.broadcastCountdown(); // update ready count in UI
+                        this.broadcastCountdown();
                     }
                 } else {
+                    // Private: just update slots
                     this.broadcastCountdown();
                 }
             }
